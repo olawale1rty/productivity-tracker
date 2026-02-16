@@ -187,12 +187,26 @@ function switchView(view) {
 }
 
 document.querySelectorAll('.sidebar-item').forEach(btn => {
-    btn.addEventListener('click', () => switchView(btn.dataset.view));
+    btn.addEventListener('click', () => {
+        switchView(btn.dataset.view);
+        // Close sidebar on mobile after navigation
+        if (window.innerWidth < 769) {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebarOverlay').classList.remove('active');
+        }
+    });
 });
 
 // Sidebar toggle for mobile
 document.getElementById('sidebarToggle').addEventListener('click', () => {
-    document.getElementById('sidebar').classList.toggle('open');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('active', sidebar.classList.contains('open'));
+});
+document.getElementById('sidebarOverlay').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebarOverlay').classList.remove('active');
 });
 
 // ── Loading States ─────────────────────────────────────────────────────

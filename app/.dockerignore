@@ -3,22 +3,18 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Database
 *.db
-productivity.db
-
-# Logs
 *.log
-logs/
-
-# Environment
+.git/
+.gitignore
 .env
+.env.example
 .flask_secret
-
-# Docker
+logs/
+README.md
+DEPLOYMENT.md
+docker-compose.yml
 docker-compose.override.yml
-
-# IDE
 .vscode/
 .idea/
+*.md
