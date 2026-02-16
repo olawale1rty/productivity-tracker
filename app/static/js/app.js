@@ -234,9 +234,17 @@ function updateTagFilter() {
     const sel = document.getElementById('filterTag');
     if (!sel) return;
     const current = sel.value;
-    sel.innerHTML = '<option value="">All tags</option>';
+    // Clear and rebuild using createElement to avoid innerHTML quirks on <select>
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'All tags';
+    sel.appendChild(defaultOpt);
     allTags.forEach(t => {
-        sel.innerHTML += `<option value="${t.id}">${esc(t.name)}</option>`;
+        const opt = document.createElement('option');
+        opt.value = String(t.id);
+        opt.textContent = t.name;
+        sel.appendChild(opt);
     });
     sel.value = current;
 }
@@ -445,6 +453,15 @@ function openList(listId) {
     document.getElementById('itemsTabContent').classList.remove('hidden');
     document.getElementById('frameworksTabContent').classList.add('hidden');
     activeFrameworkTab = null;
+    // Reset filters when opening a new list
+    const searchEl = document.getElementById('searchItemsInput');
+    const priEl = document.getElementById('filterPriority');
+    const statusEl = document.getElementById('filterStatus');
+    const tagEl = document.getElementById('filterTag');
+    if (searchEl) searchEl.value = '';
+    if (priEl) priEl.value = '';
+    if (statusEl) statusEl.value = '';
+    if (tagEl) tagEl.value = '';
     loadListDetail();
 }
 
@@ -474,6 +491,8 @@ async function loadListDetail() {
         if (bcName) bcName.textContent = list?.name || '';
         currentItems = items;
         currentFrameworks = frameworks;
+        // Refresh tag filter dropdown so newly created tags are available
+        await loadTags();
         renderItems();
         renderFrameworksCatalog();
         renderFrameworkTabs();
@@ -523,10 +542,39 @@ function bindFilterEvents() {
     const priEl = document.getElementById('filterPriority');
     const statusEl = document.getElementById('filterStatus');
     const tagEl = document.getElementById('filterTag');
-    if (searchEl) searchEl.addEventListener('input', renderItems);
-    if (priEl) priEl.addEventListener('change', renderItems);
-    if (statusEl) statusEl.addEventListener('change', renderItems);
-    if (tagEl) tagEl.addEventListener('change', renderItems);
+    const handler = () => { renderItems(); updateFilterIndicator(); };
+    if (searchEl) searchEl.addEventListener('input', handler);
+    if (priEl) priEl.addEventListener('change', handler);
+    if (statusEl) statusEl.addEventListener('change', handler);
+    if (tagEl) tagEl.addEventListener('change', handler);
+}
+
+function updateFilterIndicator() {
+    const searchEl = document.getElementById('searchItemsInput');
+    const priEl = document.getElementById('filterPriority');
+    const statusEl = document.getElementById('filterStatus');
+    const tagEl = document.getElementById('filterTag');
+    const active = (searchEl?.value || '').trim() || (priEl?.value || '') || (statusEl?.value || '') || (tagEl?.value || '');
+    let clearBtn = document.getElementById('clearFiltersBtn');
+    if (active && !clearBtn) {
+        clearBtn = document.createElement('button');
+        clearBtn.id = 'clearFiltersBtn';
+        clearBtn.className = 'btn btn-xs btn-ghost';
+        clearBtn.textContent = 'Clear filters';
+        clearBtn.style.marginLeft = '0.5rem';
+        clearBtn.addEventListener('click', () => {
+            if (searchEl) searchEl.value = '';
+            if (priEl) priEl.value = '';
+            if (statusEl) statusEl.value = '';
+            if (tagEl) tagEl.value = '';
+            renderItems();
+            updateFilterIndicator();
+        });
+        const filterBar = tagEl?.parentElement;
+        if (filterBar) filterBar.appendChild(clearBtn);
+    } else if (!active && clearBtn) {
+        clearBtn.remove();
+    }
 }
 
 // ── Items ──────────────────────────────────────────────────────────────
@@ -808,6 +856,7 @@ function renderEditTags(item) {
                 currentItems = items;
                 const updated = currentItems.find(i => i.id === item.id);
                 renderEditTags(updated);
+                renderItems();
             } catch (e) { toast(e.message, 'error'); }
         });
         container.appendChild(chip);
@@ -916,6 +965,7 @@ function renderTagsManager() {
                 const items = await api(`/api/lists/${currentListId}/items`);
                 currentItems = items;
                 renderTagsManager();
+                renderItems();
                 const updated = currentItems.find(i => i.id === editingItemId);
                 renderEditTags(updated);
             } catch (e) { toast(e.message, 'error'); }
@@ -924,7 +974,12 @@ function renderTagsManager() {
             try {
                 await api(`/api/tags/${t.id}`, { method: 'DELETE' });
                 await loadTags();
+                const items = await api(`/api/lists/${currentListId}/items`);
+                currentItems = items;
                 renderTagsManager();
+                renderItems();
+                const updated = currentItems.find(i => i.id === editingItemId);
+                if (updated) renderEditTags(updated);
             } catch (e) { toast(e.message, 'error'); }
         });
         container.appendChild(row);
