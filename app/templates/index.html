@@ -1,0 +1,1163 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Productivity Tracker</title>
+    <link rel="manifest" href="/static/manifest.json" />
+    <meta name="theme-color" content="#5856d6" />
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body>
+    <!-- AUTH SCREEN -->
+    <div id="authScreen" class="auth-screen">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+          </svg>
+        </div>
+        <h2 id="authTitle">Sign In</h2>
+        <p class="auth-sub">Organize your work with productivity frameworks</p>
+        <div class="field">
+          <label>Username</label>
+          <input
+            type="text"
+            id="authUser"
+            placeholder="Enter username"
+            autocomplete="username"
+          />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input
+            type="password"
+            id="authPass"
+            placeholder="Enter password"
+            autocomplete="current-password"
+          />
+        </div>
+        <button class="btn btn-primary btn-full" id="authSubmit">
+          Sign In
+        </button>
+        <div id="authError" class="field-error"></div>
+        <div class="auth-switch">
+          <span id="authSwitchText">Don't have an account?</span>
+          <a id="authSwitch" href="#">Create one</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN APP -->
+    <div id="mainApp" class="hidden">
+      <nav class="top-nav">
+        <div class="nav-left">
+          <button
+            class="btn btn-icon sidebar-toggle"
+            id="sidebarToggle"
+            aria-label="Toggle sidebar"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <svg
+            class="nav-icon"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="3" y="3" width="7" height="7" />
+            <rect x="14" y="3" width="7" height="7" />
+            <rect x="14" y="14" width="7" height="7" />
+            <rect x="3" y="14" width="7" height="7" />
+          </svg>
+          <h1>Productivity Tracker</h1>
+        </div>
+        <div class="nav-right">
+          <button
+            class="btn btn-icon"
+            id="themeToggle"
+            title="Toggle theme"
+            aria-label="Toggle theme"
+          >
+            <svg
+              id="themeIconLight"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+            <svg
+              id="themeIconDark"
+              class="hidden"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          </button>
+          <div class="nav-user-wrap">
+            <div
+              class="avatar"
+              id="navAvatar"
+              title="User menu"
+              aria-label="User menu"
+            ></div>
+            <span class="nav-user" id="navUser"></span>
+            <button class="btn btn-sm btn-ghost" id="logoutBtn">Logout</button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="app-layout">
+        <!-- SIDEBAR -->
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-section">
+            <button
+              class="sidebar-item active"
+              data-view="dashboard"
+              id="sidebarDashboard"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="7" height="9" />
+                <rect x="14" y="3" width="7" height="5" />
+                <rect x="14" y="12" width="7" height="9" />
+                <rect x="3" y="16" width="7" height="5" />
+              </svg>
+              Dashboard
+            </button>
+            <button class="sidebar-item" data-view="lists" id="sidebarLists">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+              My Lists
+            </button>
+            <button class="sidebar-item" data-view="shared" id="sidebarShared">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Shared With Me
+            </button>
+            <button
+              class="sidebar-item"
+              data-view="templates"
+              id="sidebarTemplates"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="21" x2="9" y2="9" />
+              </svg>
+              Templates
+            </button>
+          </div>
+          <div class="sidebar-section sidebar-lists-nav" id="sidebarListsNav">
+            <div class="sidebar-section-title">Lists</div>
+            <div id="sidebarListItems"></div>
+          </div>
+        </aside>
+
+        <div class="app-container">
+          <!-- BREADCRUMB -->
+          <div id="breadcrumb" class="breadcrumb hidden"></div>
+
+          <!-- LOADING SKELETON -->
+          <div id="loadingSkeleton" class="loading-skeleton hidden">
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card"></div>
+          </div>
+
+          <!-- DASHBOARD VIEW -->
+          <div id="dashboardView">
+            <div class="view-header">
+              <div>
+                <h2>Dashboard</h2>
+                <p class="view-sub">Overview of your productivity</p>
+              </div>
+            </div>
+            <div class="dashboard-stats" id="dashboardStats">
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--primary-bg); color: var(--primary)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                    />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statLists">0</div>
+                <div class="stat-label">Total Lists</div>
+              </div>
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--info-bg); color: var(--info)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statItems">0</div>
+                <div class="stat-label">Total Items</div>
+              </div>
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--success-bg); color: var(--success)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statCompleted">0</div>
+                <div class="stat-label">Completed</div>
+              </div>
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--danger-bg); color: var(--danger)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statOverdue">0</div>
+                <div class="stat-label">Overdue</div>
+              </div>
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--warning-bg); color: var(--warning)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polygon
+                      points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                    />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statHighPri">0</div>
+                <div class="stat-label">High Priority</div>
+              </div>
+              <div class="stat-card">
+                <div
+                  class="stat-icon"
+                  style="background: var(--primary-bg); color: var(--primary)"
+                >
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="18" y1="20" x2="18" y2="10" />
+                    <line x1="12" y1="20" x2="12" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="14" />
+                  </svg>
+                </div>
+                <div class="stat-value" id="statRate">0%</div>
+                <div class="stat-label">Completion Rate</div>
+              </div>
+            </div>
+            <div class="dashboard-row">
+              <div class="dashboard-panel">
+                <h3>Framework Usage</h3>
+                <div id="fwUsageChart" class="fw-usage-chart"></div>
+              </div>
+              <div class="dashboard-panel">
+                <h3>Recent Items</h3>
+                <div id="recentItems" class="recent-items-list"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LISTS VIEW -->
+          <div id="listsView" class="hidden">
+            <div class="view-header">
+              <div>
+                <h2>My Lists</h2>
+                <p class="view-sub">
+                  Create lists and apply productivity frameworks to organize
+                  your work
+                </p>
+              </div>
+              <div class="view-header-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="importListBtn"
+                  aria-label="Import list"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Import
+                </button>
+                <button
+                  class="btn btn-primary"
+                  id="newListBtn"
+                  aria-label="Create new list"
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  New List
+                </button>
+              </div>
+            </div>
+            <div id="listsGrid" class="lists-grid"></div>
+            <div id="listsEmpty" class="empty-state hidden">
+              <svg
+                width="64"
+                height="64"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                opacity="0.4"
+              >
+                <path
+                  d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <polyline points="10 9 9 9 8 9" />
+              </svg>
+              <h3>No lists yet</h3>
+              <p>
+                Create your first list to start organizing your work with
+                productivity frameworks
+              </p>
+              <button
+                class="btn btn-primary"
+                onclick="document.getElementById('newListBtn').click()"
+              >
+                Create a List
+              </button>
+            </div>
+          </div>
+
+          <!-- SHARED LISTS VIEW -->
+          <div id="sharedView" class="hidden">
+            <div class="view-header">
+              <div>
+                <h2>Shared With Me</h2>
+                <p class="view-sub">Lists others have shared with you</p>
+              </div>
+            </div>
+            <div id="sharedGrid" class="lists-grid"></div>
+            <div id="sharedEmpty" class="empty-state hidden">
+              <svg
+                width="64"
+                height="64"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                opacity="0.4"
+              >
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <h3>No shared lists</h3>
+              <p>When someone shares a list with you, it will appear here</p>
+            </div>
+          </div>
+
+          <!-- TEMPLATES VIEW -->
+          <div id="templatesView" class="hidden">
+            <div class="view-header">
+              <div>
+                <h2>Templates</h2>
+                <p class="view-sub">Save and reuse list templates</p>
+              </div>
+            </div>
+            <div id="templatesGrid" class="lists-grid"></div>
+            <div id="templatesEmpty" class="empty-state hidden">
+              <svg
+                width="64"
+                height="64"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                opacity="0.4"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="21" x2="9" y2="9" />
+              </svg>
+              <h3>No templates yet</h3>
+              <p>Save a list as a template from the list detail view</p>
+            </div>
+          </div>
+
+          <!-- LIST DETAIL VIEW -->
+          <div id="detailView" class="hidden">
+            <div class="detail-header">
+              <div class="detail-info">
+                <h2 id="detailTitle"></h2>
+                <p class="detail-desc" id="detailDesc"></p>
+              </div>
+              <div class="detail-actions">
+                <button
+                  class="btn btn-sm btn-ghost"
+                  id="shareListBtn"
+                  aria-label="Share list"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  Share
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  id="exportListBtn"
+                  aria-label="Export list"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  Export
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  id="saveTemplateBtn"
+                  aria-label="Save as template"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                  Template
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost"
+                  id="editListBtn"
+                  aria-label="Edit list"
+                >
+                  Edit
+                </button>
+                <button
+                  class="btn btn-sm btn-danger-outline"
+                  id="deleteListBtn"
+                  aria-label="Delete list"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+
+            <!-- TABS: Items | Frameworks -->
+            <div class="tabs">
+              <button
+                class="tab active"
+                data-tab="items"
+                aria-label="Items tab"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="8" y1="6" x2="21" y2="6" />
+                  <line x1="8" y1="12" x2="21" y2="12" />
+                  <line x1="8" y1="18" x2="21" y2="18" />
+                  <line x1="3" y1="6" x2="3.01" y2="6" />
+                  <line x1="3" y1="12" x2="3.01" y2="12" />
+                  <line x1="3" y1="18" x2="3.01" y2="18" />
+                </svg>
+                Items <span class="tab-badge" id="itemCountBadge">0</span>
+              </button>
+              <button
+                class="tab"
+                data-tab="frameworks"
+                aria-label="Frameworks tab"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                </svg>
+                Frameworks <span class="tab-badge" id="fwCountBadge">0</span>
+              </button>
+            </div>
+
+            <!-- Items Tab Content -->
+            <div id="itemsTabContent" class="tab-content">
+              <!-- Search & Filter bar -->
+              <div class="search-filter-bar">
+                <div class="search-wrap">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    id="searchItemsInput"
+                    placeholder="Search items..."
+                    aria-label="Search items"
+                  />
+                </div>
+                <select id="filterPriority" aria-label="Filter by priority">
+                  <option value="">All priorities</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <select id="filterStatus" aria-label="Filter by status">
+                  <option value="">All statuses</option>
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                </select>
+                <select id="filterTag" aria-label="Filter by tag">
+                  <option value="">All tags</option>
+                </select>
+              </div>
+              <!-- Bulk Actions -->
+              <div id="bulkActions" class="bulk-actions hidden">
+                <label class="bulk-select-all"
+                  ><input
+                    type="checkbox"
+                    id="selectAllItems"
+                    aria-label="Select all items"
+                  />
+                  Select All</label
+                >
+                <span id="bulkCount">0 selected</span>
+                <button
+                  class="btn btn-xs btn-danger-outline"
+                  id="bulkDeleteBtn"
+                  aria-label="Delete selected"
+                >
+                  Delete
+                </button>
+                <button
+                  class="btn btn-xs btn-ghost"
+                  id="bulkMoveBtn"
+                  aria-label="Move selected"
+                >
+                  Move to...
+                </button>
+              </div>
+              <div class="add-item-row">
+                <input
+                  type="text"
+                  id="newItemInput"
+                  placeholder="Add a new item..."
+                  aria-label="New item title"
+                />
+                <select
+                  id="newItemPriority"
+                  aria-label="New item priority"
+                  class="priority-select"
+                >
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                </select>
+                <button
+                  class="btn btn-primary"
+                  id="addItemBtn"
+                  aria-label="Add item"
+                >
+                  Add
+                </button>
+              </div>
+              <div id="itemsList" class="items-list"></div>
+              <div id="itemsEmpty" class="empty-state-sm hidden">
+                <p>No items yet. Add items above to get started.</p>
+              </div>
+            </div>
+
+            <!-- Frameworks Tab Content -->
+            <div id="frameworksTabContent" class="tab-content hidden">
+              <p class="tab-intro">
+                Select frameworks to apply to your items. Each provides a unique
+                view to organize and prioritize your work.
+              </p>
+              <div id="frameworksCatalog" class="frameworks-catalog"></div>
+            </div>
+
+            <!-- Active Framework Views -->
+            <div id="activeFrameworks" class="active-frameworks">
+              <h3
+                class="section-title"
+                id="activeFrameworksTitle"
+                style="display: none"
+              >
+                Framework Views
+              </h3>
+              <div id="frameworkTabs" class="framework-tabs"></div>
+              <div id="frameworkViewport" class="framework-viewport"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Create/Edit List -->
+    <div
+      id="listModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="listModalTitle">New List</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="listModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label for="modalName">List Name</label>
+          <input
+            type="text"
+            id="modalName"
+            placeholder="e.g. Q1 Sprint Goals"
+          />
+        </div>
+        <div class="field">
+          <label for="modalDesc">Description (optional)</label>
+          <textarea
+            id="modalDesc"
+            rows="3"
+            placeholder="What's this list for?"
+          ></textarea>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="listModal">
+            Cancel
+          </button>
+          <button class="btn btn-primary" id="modalSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Edit Item -->
+    <div
+      id="itemModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box modal-box-lg">
+        <div class="modal-header">
+          <h3>Edit Item</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="itemModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label for="editItemTitle">Title</label>
+          <input type="text" id="editItemTitle" />
+        </div>
+        <div class="field">
+          <label for="editItemDesc">Description</label>
+          <textarea id="editItemDesc" rows="3"></textarea>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="editItemPriority">Priority</label>
+            <select id="editItemPriority">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="editItemDue">Due Date</label>
+            <input type="date" id="editItemDue" />
+          </div>
+        </div>
+        <!-- Tags -->
+        <div class="field">
+          <label>Tags</label>
+          <div class="edit-tags-row">
+            <div id="editItemTags" class="edit-item-tags"></div>
+            <button
+              class="btn btn-xs btn-ghost"
+              id="manageTagsBtn"
+              aria-label="Manage tags"
+            >
+              + Tag
+            </button>
+          </div>
+        </div>
+        <!-- Comments -->
+        <div class="field">
+          <label>Comments</label>
+          <div id="itemComments" class="item-comments"></div>
+          <div class="comment-add-row">
+            <input
+              type="text"
+              id="newCommentInput"
+              placeholder="Add a comment..."
+              aria-label="New comment"
+            />
+            <button
+              class="btn btn-xs btn-primary"
+              id="addCommentBtn"
+              aria-label="Add comment"
+            >
+              Post
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="itemModal">
+            Cancel
+          </button>
+          <button class="btn btn-primary" id="editItemSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Custom Confirm -->
+    <div
+      id="confirmModal"
+      class="modal-overlay hidden"
+      role="alertdialog"
+      aria-modal="true"
+    >
+      <div class="modal-box modal-box-sm">
+        <div class="modal-header">
+          <h3 id="confirmTitle">Confirm</h3>
+        </div>
+        <p id="confirmMessage" class="confirm-message"></p>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="confirmCancel">Cancel</button>
+          <button class="btn btn-primary" id="confirmOk">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Share List -->
+    <div
+      id="shareModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Share List</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="shareModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label for="shareUsername">Username</label>
+          <input
+            type="text"
+            id="shareUsername"
+            placeholder="Enter username to share with"
+          />
+        </div>
+        <div class="field">
+          <label for="sharePermission">Permission</label>
+          <select id="sharePermission">
+            <option value="view">View only</option>
+            <option value="edit">Can edit</option>
+          </select>
+        </div>
+        <button class="btn btn-primary btn-full" id="shareSubmit">Share</button>
+        <div
+          class="share-list-wrap"
+          id="currentShares"
+          style="margin-top: 1rem"
+        ></div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="shareModal">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Import List -->
+    <div
+      id="importModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Import List</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="importModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label>Paste JSON data or enter items (one per line)</label>
+          <textarea
+            id="importData"
+            rows="8"
+            placeholder='{"name":"My List","items":[{"title":"Item 1"}]}'
+          ></textarea>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="importModal">
+            Cancel
+          </button>
+          <button class="btn btn-primary" id="importSubmit">Import</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Save Template -->
+    <div
+      id="templateModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box modal-box-sm">
+        <div class="modal-header">
+          <h3>Save as Template</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="templateModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label for="templateName">Template Name</label>
+          <input
+            type="text"
+            id="templateName"
+            placeholder="e.g. Weekly Sprint"
+          />
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="templateModal">
+            Cancel
+          </button>
+          <button class="btn btn-primary" id="templateSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Manage Tags -->
+    <div
+      id="tagsModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box modal-box-sm">
+        <div class="modal-header">
+          <h3>Manage Tags</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="tagsModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="tags-manager">
+          <div id="tagsList" class="tags-list"></div>
+          <div class="tag-add-row">
+            <input
+              type="text"
+              id="newTagName"
+              placeholder="Tag name"
+              aria-label="New tag name"
+            />
+            <input
+              type="color"
+              id="newTagColor"
+              value="#6366f1"
+              aria-label="Tag color"
+            />
+            <button
+              class="btn btn-xs btn-primary"
+              id="addTagBtn"
+              aria-label="Add tag"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="tagsModal">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: Bulk Move -->
+    <div
+      id="bulkMoveModal"
+      class="modal-overlay hidden"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-box modal-box-sm">
+        <div class="modal-header">
+          <h3>Move Items To</h3>
+          <button
+            class="btn btn-icon modal-close"
+            data-modal="bulkMoveModal"
+            aria-label="Close"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="field">
+          <label for="bulkMoveTarget">Select target list</label>
+          <select id="bulkMoveTarget"></select>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost modal-close" data-modal="bulkMoveModal">
+            Cancel
+          </button>
+          <button class="btn btn-primary" id="bulkMoveConfirm">Move</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- UNDO BAR -->
+    <div id="undoBar" class="undo-bar hidden">
+      <span id="undoMessage"></span>
+      <button class="btn btn-xs btn-primary" id="undoBtn">Undo</button>
+    </div>
+
+    <!-- KEYBOARD SHORTCUTS HELP -->
+    <div id="shortcutsHelp" class="shortcuts-help hidden">
+      <div class="shortcuts-card">
+        <h3>Keyboard Shortcuts</h3>
+        <div class="shortcut-row"><kbd>N</kbd> New list</div>
+        <div class="shortcut-row"><kbd>D</kbd> Dashboard</div>
+        <div class="shortcut-row"><kbd>/</kbd> Focus search</div>
+        <div class="shortcut-row"><kbd>Esc</kbd> Close modal / Go back</div>
+        <div class="shortcut-row"><kbd>Ctrl+Z</kbd> Undo</div>
+        <div class="shortcut-row"><kbd>?</kbd> Toggle this help</div>
+        <button
+          class="btn btn-ghost btn-sm"
+          onclick="
+            document.getElementById('shortcutsHelp').classList.add('hidden')
+          "
+        >
+          Close
+        </button>
+      </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+</html>
