@@ -1,22 +1,39 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: productivity-db
+    restart: unless-stopped
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-productivity}
+      POSTGRES_USER: ${POSTGRES_USER:-productivity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-productivity}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: productivity-tracker
     restart: unless-stopped
-    ports:
-      - "${PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      - app-data:/data
+      - app-logs:/data/logs
     env_file:
       - .env
     environment:
-      - FLASK_ENV=production
-      - DATABASE_PATH=/data/productivity.db
-      - LOG_DIR=/data/logs
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-productivity}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-productivity}
+      LOG_DIR: /data/logs
     healthcheck:
       test:
         [
@@ -28,8 +45,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+
+  nginx:
+    image: nginx:alpine
+    container_name: productivity-nginx
+    restart: unless-stopped
+    ports:
+      - "${PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./static:/app/static:ro
+    depends_on:
+      app:
+        condition: service_healthy
 
 volumes:
-  app-data:
+  pg-data:
+    driver: local
+  app-logs:
     driver: local

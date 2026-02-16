@@ -27,13 +27,28 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # ── Configuration ─────────────────────────────────────────────────────────
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-DB_PATH     = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "productivity.db"))
-SECRET_FILE = os.path.join(BASE_DIR, ".flask_secret")
-LOG_DIR     = os.environ.get("LOG_DIR", os.path.join(BASE_DIR, "logs"))
-LOG_LEVEL   = os.environ.get("LOG_LEVEL", "INFO").upper()
-ENV         = os.environ.get("FLASK_ENV", "development")
-IS_PROD     = ENV == "production"
+BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+DB_PATH       = os.environ.get("DATABASE_PATH", os.path.join(BASE_DIR, "productivity.db"))
+DATABASE_URL  = os.environ.get("DATABASE_URL")  # PostgreSQL connection string
+SECRET_FILE   = os.path.join(BASE_DIR, ".flask_secret")
+LOG_DIR       = os.environ.get("LOG_DIR", os.path.join(BASE_DIR, "logs"))
+LOG_LEVEL     = os.environ.get("LOG_LEVEL", "INFO").upper()
+ENV           = os.environ.get("FLASK_ENV", "development")
+IS_PROD       = ENV == "production"
+
+# Fix postgres:// → postgresql:// (Heroku, Railway compatibility)
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+USE_POSTGRES = bool(DATABASE_URL)
+
+# Conditional PostgreSQL driver
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.extras
+    DBIntegrityError = psycopg2.IntegrityError
+else:
+    DBIntegrityError = sqlite3.IntegrityError
 
 # ── Logging Setup ─────────────────────────────────────────────────────────
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -120,7 +135,8 @@ app.config.update(
 
 # Initialise logging
 audit_log = _setup_logging(app)
-app.logger.info("App starting — env=%s, db=%s", ENV, DB_PATH)
+db_info = DATABASE_URL.split("@")[-1] if USE_POSTGRES else DB_PATH
+app.logger.info("App starting — env=%s, db=%s (%s)", ENV, db_info, "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 # ── Rate limiting (in-memory) ─────────────────────────────────────────────
 _rate_store = defaultdict(list)  # ip -> [timestamps]
@@ -257,14 +273,106 @@ FRAMEWORKS = {
     },
 }
 
-# ── Database ──────────────────────────────────────────────────────────────
+# ── Database Abstraction ─────────────────────────────────────────────────
+# Unified interface so the app works with both SQLite and PostgreSQL.
+
+_SERIAL_ID_TABLES = frozenset({
+    "users", "lists", "list_items", "list_frameworks",
+    "item_framework_data", "tags", "item_comments",
+    "list_templates", "list_shares",
+})
+
+if USE_POSTGRES:
+    class _PgCursorWrapper:
+        """Wraps psycopg2 cursor to provide sqlite3-compatible interface."""
+        def __init__(self, cursor, lastrowid=None):
+            self._cursor = cursor
+            self.lastrowid = lastrowid
+
+        def fetchone(self):
+            try:
+                return self._cursor.fetchone()
+            except psycopg2.ProgrammingError:
+                return None
+
+        def fetchall(self):
+            try:
+                return self._cursor.fetchall()
+            except psycopg2.ProgrammingError:
+                return []
+
+        def __getitem__(self, key):
+            row = self.fetchone()
+            return row[key] if row else None
+
+    class _PgConnectionWrapper:
+        """Wraps psycopg2 connection to provide sqlite3-like interface."""
+        def __init__(self, conn):
+            self._conn = conn
+            self.row_factory = None  # compatibility stub
+
+        @staticmethod
+        def _convert_sql(sql):
+            """Convert SQLite SQL dialect to PostgreSQL."""
+            sql = sql.replace("?", "%s")
+            sql = sql.replace("datetime('now')", "CURRENT_TIMESTAMP")
+            sql = sql.replace("date('now')", "CURRENT_DATE::text")
+            return sql
+
+        def execute(self, sql, params=None):
+            sql = self._convert_sql(sql)
+            cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            is_insert = sql.strip().upper().startswith("INSERT")
+            added_returning = False
+
+            if is_insert and "RETURNING" not in sql.upper():
+                match = re.match(r"INSERT\s+INTO\s+(\w+)", sql.strip(), re.IGNORECASE)
+                table = match.group(1).lower() if match else None
+                if table in _SERIAL_ID_TABLES:
+                    sql += " RETURNING id"
+                    added_returning = True
+
+            cur.execute(sql, params or ())
+
+            lastrowid = None
+            if added_returning:
+                try:
+                    row = cur.fetchone()
+                    if row:
+                        lastrowid = row.get("id")
+                except Exception:
+                    pass
+
+            return _PgCursorWrapper(cur, lastrowid)
+
+        def executescript(self, sql):
+            cur = self._conn.cursor()
+            cur.execute(sql)
+            return cur
+
+        def commit(self):
+            self._conn.commit()
+
+        def rollback(self):
+            self._conn.rollback()
+
+        def close(self):
+            self._conn.close()
+
+# ── Database Connection ──────────────────────────────────────────────────
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA journal_mode=WAL")
-        g.db.execute("PRAGMA foreign_keys=ON")
+        if USE_POSTGRES:
+            conn = psycopg2.connect(DATABASE_URL)
+            g.db = _PgConnectionWrapper(conn)
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            g.db = conn
     return g.db
 
 @app.teardown_appcontext
@@ -273,115 +381,215 @@ def close_db(exc):
     if db is not None:
         db.close()
 
+# ── Schema Definitions ──────────────────────────────────────────────────
+
+_SQLITE_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS list_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        list_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        due_date TEXT DEFAULT NULL,
+        priority TEXT DEFAULT 'medium',
+        completed INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS list_frameworks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        list_id INTEGER NOT NULL,
+        framework_key TEXT NOT NULL,
+        added_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+        UNIQUE(list_id, framework_key)
+    );
+    CREATE TABLE IF NOT EXISTS item_framework_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL,
+        framework_key TEXT NOT NULL,
+        data_json TEXT DEFAULT '{}',
+        updated_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
+        UNIQUE(item_id, framework_key)
+    );
+    CREATE TABLE IF NOT EXISTS tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#6366f1',
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, name)
+    );
+    CREATE TABLE IF NOT EXISTS item_tags (
+        item_id INTEGER NOT NULL,
+        tag_id INTEGER NOT NULL,
+        PRIMARY KEY (item_id, tag_id),
+        FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS list_shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        list_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        shared_with_id INTEGER NOT NULL,
+        permission TEXT DEFAULT 'view',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+        FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (shared_with_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(list_id, shared_with_id)
+    );
+    CREATE TABLE IF NOT EXISTS item_comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS list_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        items_json TEXT DEFAULT '[]',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+"""
+
+_POSTGRES_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS lists (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS list_items (
+        id SERIAL PRIMARY KEY,
+        list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        due_date TEXT DEFAULT NULL,
+        priority TEXT DEFAULT 'medium',
+        completed INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS list_frameworks (
+        id SERIAL PRIMARY KEY,
+        list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        framework_key TEXT NOT NULL,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(list_id, framework_key)
+    );
+    CREATE TABLE IF NOT EXISTS item_framework_data (
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES list_items(id) ON DELETE CASCADE,
+        framework_key TEXT NOT NULL,
+        data_json TEXT DEFAULT '{}',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(item_id, framework_key)
+    );
+    CREATE TABLE IF NOT EXISTS tags (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#6366f1',
+        UNIQUE(user_id, name)
+    );
+    CREATE TABLE IF NOT EXISTS item_tags (
+        item_id INTEGER NOT NULL REFERENCES list_items(id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        PRIMARY KEY (item_id, tag_id)
+    );
+    CREATE TABLE IF NOT EXISTS list_shares (
+        id SERIAL PRIMARY KEY,
+        list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        shared_with_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission TEXT DEFAULT 'view',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(list_id, shared_with_id)
+    );
+    CREATE TABLE IF NOT EXISTS item_comments (
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES list_items(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS list_templates (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        items_json TEXT DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+"""
+
 def init_db():
+    """Initialise database tables. Works with both SQLite and PostgreSQL."""
+    if USE_POSTGRES:
+        _init_db_postgres()
+    else:
+        _init_db_sqlite()
+
+def _init_db_sqlite():
     db = sqlite3.connect(DB_PATH)
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA foreign_keys=ON")
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS lists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-        CREATE TABLE IF NOT EXISTS list_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            list_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            sort_order INTEGER DEFAULT 0,
-            due_date TEXT DEFAULT NULL,
-            priority TEXT DEFAULT 'medium',
-            completed INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
-        );
-        CREATE TABLE IF NOT EXISTS list_frameworks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            list_id INTEGER NOT NULL,
-            framework_key TEXT NOT NULL,
-            added_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
-            UNIQUE(list_id, framework_key)
-        );
-        CREATE TABLE IF NOT EXISTS item_framework_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            framework_key TEXT NOT NULL,
-            data_json TEXT DEFAULT '{}',
-            updated_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
-            UNIQUE(item_id, framework_key)
-        );
-        CREATE TABLE IF NOT EXISTS tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            color TEXT DEFAULT '#6366f1',
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE(user_id, name)
-        );
-        CREATE TABLE IF NOT EXISTS item_tags (
-            item_id INTEGER NOT NULL,
-            tag_id INTEGER NOT NULL,
-            PRIMARY KEY (item_id, tag_id),
-            FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
-            FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-        );
-        CREATE TABLE IF NOT EXISTS list_shares (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            list_id INTEGER NOT NULL,
-            owner_id INTEGER NOT NULL,
-            shared_with_id INTEGER NOT NULL,
-            permission TEXT DEFAULT 'view',
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
-            FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY (shared_with_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE(list_id, shared_with_id)
-        );
-        CREATE TABLE IF NOT EXISTS item_comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (item_id) REFERENCES list_items(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-        CREATE TABLE IF NOT EXISTS list_templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            items_json TEXT DEFAULT '[]',
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
-    """)
+    db.executescript(_SQLITE_SCHEMA)
     # Migrate: add columns if they don't exist (for existing DBs)
-    try:
-        db.execute("ALTER TABLE list_items ADD COLUMN due_date TEXT DEFAULT NULL")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        db.execute("ALTER TABLE list_items ADD COLUMN priority TEXT DEFAULT 'medium'")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        db.execute("ALTER TABLE list_items ADD COLUMN completed INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+    for col_sql in [
+        "ALTER TABLE list_items ADD COLUMN due_date TEXT DEFAULT NULL",
+        "ALTER TABLE list_items ADD COLUMN priority TEXT DEFAULT 'medium'",
+        "ALTER TABLE list_items ADD COLUMN completed INTEGER DEFAULT 0",
+    ]:
+        try:
+            db.execute(col_sql)
+        except sqlite3.OperationalError:
+            pass
     db.commit()
     db.close()
+
+def _init_db_postgres():
+    conn = psycopg2.connect(DATABASE_URL)
+    cur = conn.cursor()
+    cur.execute(_POSTGRES_SCHEMA)
+    # Migrate: add columns if they don't exist
+    for col_sql in [
+        "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS due_date TEXT DEFAULT NULL",
+        "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'medium'",
+        "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS completed INTEGER DEFAULT 0",
+    ]:
+        cur.execute(col_sql)
+    conn.commit()
+    conn.close()
 
 # ── Auth helpers ──────────────────────────────────────────────────────────
 
@@ -697,12 +905,9 @@ def add_list_framework(lid):
     db = get_db()
     if not _owns_list(db, lid):
         return jsonify({"error": "Not found"}), 404
-    try:
-        db.execute("INSERT INTO list_frameworks (list_id, framework_key) VALUES (?,?)",
-                    (lid, key))
-        db.commit()
-    except sqlite3.IntegrityError:
-        pass
+    db.execute("INSERT INTO list_frameworks (list_id, framework_key) VALUES (?,?) ON CONFLICT DO NOTHING",
+                (lid, key))
+    db.commit()
     return jsonify({"ok": True}), 201
 
 @app.route("/api/lists/<int:lid>/frameworks/<key>", methods=["DELETE"])
@@ -800,7 +1005,8 @@ def create_tag():
                           (uid(), name, color))
         db.commit()
         return jsonify({"ok": True, "id": cur.lastrowid}), 201
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
+        db.rollback()
         return jsonify({"error": "Tag already exists"}), 409
 
 @app.route("/api/tags/<int:tid>", methods=["DELETE"])
@@ -822,11 +1028,8 @@ def add_item_tag(iid, tid):
     # Verify user owns the tag
     if not db.execute("SELECT id FROM tags WHERE id=? AND user_id=?", (tid, uid())).fetchone():
         return jsonify({"error": "Tag not found"}), 404
-    try:
-        db.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?,?)", (iid, tid))
-        db.commit()
-    except sqlite3.IntegrityError:
-        pass
+    db.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (?,?) ON CONFLICT DO NOTHING", (iid, tid))
+    db.commit()
     return jsonify({"ok": True})
 
 @app.route("/api/items/<int:iid>/tags/<int:tid>", methods=["DELETE"])
@@ -990,11 +1193,8 @@ def import_list():
              1 if item.get("completed") else 0))
     for fk in frameworks:
         if fk in FRAMEWORKS:
-            try:
-                db.execute("INSERT INTO list_frameworks (list_id, framework_key) VALUES (?,?)",
-                            (lid, fk))
-            except sqlite3.IntegrityError:
-                pass
+            db.execute("INSERT INTO list_frameworks (list_id, framework_key) VALUES (?,?) ON CONFLICT DO NOTHING",
+                        (lid, fk))
     db.commit()
     return jsonify({"ok": True, "id": lid}), 201
 
@@ -1016,14 +1216,10 @@ def share_list(lid):
         return jsonify({"error": "User not found"}), 404
     if user["id"] == uid():
         return jsonify({"error": "Cannot share with yourself"}), 400
-    try:
-        db.execute("INSERT INTO list_shares (list_id, owner_id, shared_with_id, permission) VALUES (?,?,?,?)",
-                    (lid, uid(), user["id"], permission))
-        db.commit()
-    except sqlite3.IntegrityError:
-        db.execute("UPDATE list_shares SET permission=? WHERE list_id=? AND shared_with_id=?",
-                    (permission, lid, user["id"]))
-        db.commit()
+    db.execute("""INSERT INTO list_shares (list_id, owner_id, shared_with_id, permission) VALUES (?,?,?,?)
+                  ON CONFLICT (list_id, shared_with_id) DO UPDATE SET permission = EXCLUDED.permission""",
+                (lid, uid(), user["id"], permission))
+    db.commit()
     return jsonify({"ok": True})
 
 @app.route("/api/lists/<int:lid>/share", methods=["GET"])
@@ -1133,17 +1329,27 @@ def health_check():
     try:
         db = get_db()
         db.execute("SELECT 1").fetchone()
-        return jsonify({"status": "healthy", "env": ENV}), 200
+        return jsonify({
+            "status": "healthy",
+            "env": ENV,
+            "database": "postgresql" if USE_POSTGRES else "sqlite",
+        }), 200
     except Exception as e:
         app.logger.error("Health check failed: %s", e)
         return jsonify({"status": "unhealthy", "error": str(e)}), 503
 
-# ── Run (development only) ────────────────────────────────────────────────
+# ── Run ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 5000))
-    debug = not IS_PROD
-    app.logger.info("Starting dev server on port %d (debug=%s)", port, debug)
     print(f"\n  Productivity Framework Tracker → http://127.0.0.1:{port}\n")
-    app.run(debug=debug, host="0.0.0.0", port=port)
+
+    if IS_PROD:
+        # Waitress works on both Windows and Linux
+        from waitress import serve
+        app.logger.info("Starting waitress on port %d", port)
+        serve(app, host="0.0.0.0", port=port, threads=4)
+    else:
+        app.logger.info("Starting dev server on port %d", port)
+        app.run(debug=True, host="0.0.0.0", port=port)

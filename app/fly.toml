@@ -1,0 +1,44 @@
+# ── Fly.io Configuration ──────────────────────────────────────────────────
+# Deploy: fly launch → fly deploy
+# Docs:   https://fly.io/docs/
+
+app = "productivity-tracker"
+primary_region = "iad"
+
+[build]
+  # Uses the Dockerfile in the project root
+
+[env]
+  FLASK_ENV = "production"
+  PORT = "8000"
+  LOG_DIR = "/data/logs"
+  LOG_LEVEL = "INFO"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[mounts]
+  source = "app_data"
+  destination = "/data"
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8000
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"

@@ -1,10 +1,6 @@
 # ── Build stage ────────────────────────────────────────────────────────────
 FROM python:3.12-slim AS base
 
-# Prevent Python from writing .pyc files and enable unbuffered output
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
 # Create non-root user
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
@@ -25,9 +21,10 @@ RUN mkdir -p /data/logs && chown -R appuser:appuser /app /data
 USER appuser
 
 # Environment defaults
-ENV FLASK_ENV=production \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    FLASK_ENV=production \
     PORT=8000 \
-    DATABASE_PATH=/data/productivity.db \
     LOG_DIR=/data/logs \
     LOG_LEVEL=INFO
 
