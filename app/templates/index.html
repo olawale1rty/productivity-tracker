@@ -153,6 +153,26 @@
         </div>
       </nav>
 
+      <div class="calendar-bar">
+        <div class="calendar-bar-inner">
+          <div class="calendar-copy">
+            <span class="calendar-kicker">Calendar mode</span>
+            <strong id="activeDateLabel" class="calendar-title"></strong>
+            <span id="activeDateHint" class="calendar-hint"></span>
+          </div>
+          <div class="calendar-controls">
+            <button class="btn btn-icon" id="prevDateBtn" aria-label="Previous day">
+              &larr;
+            </button>
+            <input type="date" id="workDatePicker" aria-label="Select work date" />
+            <button class="btn btn-icon" id="nextDateBtn" aria-label="Next day">
+              &rarr;
+            </button>
+            <button class="btn btn-sm btn-ghost" id="todayBtn">Today</button>
+          </div>
+        </div>
+      </div>
+
       <div class="app-layout">
         <!-- SIDEBAR OVERLAY (mobile) -->
         <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -253,7 +273,7 @@
             <div class="view-header">
               <div>
                 <h2>Dashboard</h2>
-                <p class="view-sub">Overview of your productivity</p>
+                <p class="view-sub">Everything below is scoped to the selected day</p>
               </div>
             </div>
             <div class="dashboard-stats" id="dashboardStats">
@@ -385,6 +405,57 @@
                 <div class="stat-value" id="statRate">0%</div>
                 <div class="stat-label">Completion Rate</div>
               </div>
+            </div>
+            <div class="report-summary">
+              <div class="report-toolbar">
+                <div class="report-toolbar-group">
+                  <span class="report-label">Report navigator</span>
+                  <div class="report-toggle-group" role="tablist" aria-label="Report period">
+                    <button class="btn btn-xs report-period-btn active" data-report-period="weekly" id="weeklyPeriodBtn">Week</button>
+                    <button class="btn btn-xs report-period-btn" data-report-period="monthly" id="monthlyPeriodBtn">Month</button>
+                  </div>
+                  <div class="report-toggle-group" role="tablist" aria-label="Report mode">
+                    <button class="btn btn-xs report-mode-btn active" data-report-mode="snapshot" id="snapshotModeBtn">Snapshot totals</button>
+                    <button class="btn btn-xs report-mode-btn" data-report-mode="unique" id="uniqueModeBtn">Unique tasks</button>
+                  </div>
+                </div>
+                <div class="report-toolbar-actions">
+                  <button class="btn btn-xs btn-ghost" id="reportPrevBtn" aria-label="Previous report period">Previous</button>
+                  <button class="btn btn-xs btn-ghost" id="reportNextBtn" aria-label="Next report period">Next</button>
+                  <button class="btn btn-xs btn-ghost" id="reportDownloadCsvBtn" aria-label="Download report as CSV">CSV</button>
+                  <button class="btn btn-xs btn-primary" id="reportDownloadJsonBtn" aria-label="Download report as JSON">JSON</button>
+                </div>
+              </div>
+              <div class="report-toolbar-caption" id="reportNavigatorLabel"></div>
+              <div class="report-card">
+                <div class="report-label" id="primaryReportLabel">Weekly report</div>
+                <div class="report-value" id="primaryReportValue">Loading...</div>
+                <div class="report-range" id="primaryReportRange"></div>
+              </div>
+              <div class="report-card">
+                <div class="report-label" id="secondaryReportLabel">Monthly comparison</div>
+                <div class="report-value" id="secondaryReportValue">Loading...</div>
+                <div class="report-range" id="secondaryReportRange"></div>
+              </div>
+            </div>
+            <div class="report-task-repeats">
+              <h3>Task Repeats</h3>
+              <table class="task-repeats-table" id="taskRepeatsTable">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th class="text-center">Occurrences</th>
+                    <th class="text-center">Completed</th>
+                    <th class="text-center">Rate</th>
+                    <th>First Date</th>
+                    <th>Last Date</th>
+                  </tr>
+                </thead>
+                <tbody id="taskRepeatsTableBody">
+                  <!-- Populated by JavaScript -->
+                </tbody>
+              </table>
+              <div id="noTaskRepeatsMsg" class="text-center text-muted" style="padding: 20px;">No task repeats in this period</div>
             </div>
             <div class="dashboard-row">
               <div class="dashboard-panel">

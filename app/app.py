@@ -16,7 +16,7 @@ import logging
 import hashlib
 import html as html_mod
 from functools import wraps
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 from logging.handlers import RotatingFileHandler
 
@@ -393,6 +393,8 @@ _SQLITE_SCHEMA = """
     CREATE TABLE IF NOT EXISTS lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
+        series_id TEXT NOT NULL,
+        work_date TEXT NOT NULL DEFAULT (date('now')),
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         created_at TEXT DEFAULT (datetime('now')),
@@ -401,6 +403,7 @@ _SQLITE_SCHEMA = """
     CREATE TABLE IF NOT EXISTS list_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         list_id INTEGER NOT NULL,
+        series_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT DEFAULT '',
         sort_order INTEGER DEFAULT 0,
@@ -484,6 +487,8 @@ _POSTGRES_SCHEMA = """
     CREATE TABLE IF NOT EXISTS lists (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        series_id TEXT NOT NULL,
+        work_date TEXT NOT NULL DEFAULT CURRENT_DATE::text,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -491,6 +496,7 @@ _POSTGRES_SCHEMA = """
     CREATE TABLE IF NOT EXISTS list_items (
         id SERIAL PRIMARY KEY,
         list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+        series_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT DEFAULT '',
         sort_order INTEGER DEFAULT 0,
@@ -566,6 +572,9 @@ def _init_db_sqlite():
     db.executescript(_SQLITE_SCHEMA)
     # Migrate: add columns if they don't exist (for existing DBs)
     for col_sql in [
+        "ALTER TABLE lists ADD COLUMN series_id TEXT",
+        "ALTER TABLE lists ADD COLUMN work_date TEXT DEFAULT (date('now'))",
+        "ALTER TABLE list_items ADD COLUMN series_id TEXT",
         "ALTER TABLE list_items ADD COLUMN due_date TEXT DEFAULT NULL",
         "ALTER TABLE list_items ADD COLUMN priority TEXT DEFAULT 'medium'",
         "ALTER TABLE list_items ADD COLUMN completed INTEGER DEFAULT 0",
@@ -574,6 +583,9 @@ def _init_db_sqlite():
             db.execute(col_sql)
         except sqlite3.OperationalError:
             pass
+    db.execute("UPDATE lists SET series_id = COALESCE(series_id, 'series-' || id)")
+    db.execute("UPDATE lists SET work_date = COALESCE(work_date, date('now'))")
+    db.execute("UPDATE list_items SET series_id = COALESCE(series_id, 'item-' || id)")
     db.commit()
     db.close()
 
@@ -583,11 +595,17 @@ def _init_db_postgres():
     cur.execute(_POSTGRES_SCHEMA)
     # Migrate: add columns if they don't exist
     for col_sql in [
+        "ALTER TABLE lists ADD COLUMN IF NOT EXISTS series_id TEXT",
+        "ALTER TABLE lists ADD COLUMN IF NOT EXISTS work_date TEXT DEFAULT CURRENT_DATE::text",
+        "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS series_id TEXT",
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS due_date TEXT DEFAULT NULL",
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'medium'",
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS completed INTEGER DEFAULT 0",
     ]:
         cur.execute(col_sql)
+    cur.execute("UPDATE lists SET series_id = COALESCE(series_id, 'series-' || id::text)")
+    cur.execute("UPDATE lists SET work_date = COALESCE(work_date, CURRENT_DATE::text)")
+    cur.execute("UPDATE list_items SET series_id = COALESCE(series_id, 'item-' || id::text)")
     conn.commit()
     conn.close()
 
@@ -605,8 +623,304 @@ def uid():
     return session.get("user_id")
 
 def _owns_list(db, list_id):
-    return db.execute("SELECT id FROM lists WHERE id=? AND user_id=?",
-                       (list_id, uid())).fetchone()
+    return db.execute("SELECT id FROM lists WHERE id=? AND user_id=? AND work_date=?",
+                       (list_id, uid(), _active_work_date())).fetchone()
+
+
+def _active_work_date():
+    raw = request.args.get("date")
+    if raw:
+        try:
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            pass
+    return date.today().isoformat()
+
+
+def _clone_day_snapshot(db, user_id, source_date, target_date):
+    source_lists = db.execute(
+        "SELECT * FROM lists WHERE user_id=? AND work_date=? ORDER BY created_at, id",
+        (user_id, source_date),
+    ).fetchall()
+    if not source_lists:
+        return False
+
+    list_map = {}
+    item_map = {}
+
+    for source_list in source_lists:
+        source_list = dict(source_list)
+        cur = db.execute(
+            "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
+            (user_id, source_list["series_id"], target_date, source_list["name"], source_list.get("description", "")),
+        )
+        list_map[source_list["id"]] = cur.lastrowid
+
+    for source_list_id, target_list_id in list_map.items():
+        for fw in db.execute(
+            "SELECT framework_key, added_at FROM list_frameworks WHERE list_id=?",
+            (source_list_id,),
+        ).fetchall():
+            db.execute(
+                "INSERT INTO list_frameworks (list_id, framework_key, added_at) VALUES (?,?,?)",
+                (target_list_id, fw["framework_key"], fw["added_at"]),
+            )
+
+        source_items = db.execute(
+            "SELECT * FROM list_items WHERE list_id=? ORDER BY sort_order, id",
+            (source_list_id,),
+        ).fetchall()
+        for source_item in source_items:
+            source_item = dict(source_item)
+            cur = db.execute(
+                "INSERT INTO list_items (list_id, series_id, title, description, sort_order, due_date, priority, completed, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    target_list_id,
+                    source_item["series_id"],
+                    source_item["title"],
+                    source_item.get("description", ""),
+                    source_item.get("sort_order", 0),
+                    source_item.get("due_date"),
+                    source_item.get("priority", "medium"),
+                    0,
+                    source_item.get("created_at"),
+                ),
+            )
+            item_map[source_item["id"]] = cur.lastrowid
+
+    for source_item_id, target_item_id in item_map.items():
+        for tag in db.execute(
+            "SELECT tag_id FROM item_tags WHERE item_id=?",
+            (source_item_id,),
+        ).fetchall():
+            db.execute(
+                "INSERT INTO item_tags (item_id, tag_id) VALUES (?,?)",
+                (target_item_id, tag["tag_id"]),
+            )
+        for fw_data in db.execute(
+            "SELECT framework_key, data_json, updated_at FROM item_framework_data WHERE item_id=?",
+            (source_item_id,),
+        ).fetchall():
+            db.execute(
+                "INSERT INTO item_framework_data (item_id, framework_key, data_json, updated_at) VALUES (?,?,?,?)",
+                (target_item_id, fw_data["framework_key"], fw_data["data_json"], fw_data["updated_at"]),
+            )
+        for comment in db.execute(
+            "SELECT user_id, content, created_at FROM item_comments WHERE item_id=?",
+            (source_item_id,),
+        ).fetchall():
+            db.execute(
+                "INSERT INTO item_comments (item_id, user_id, content, created_at) VALUES (?,?,?,?)",
+                (target_item_id, comment["user_id"], comment["content"], comment["created_at"]),
+            )
+
+    for source_list_id, target_list_id in list_map.items():
+        for share in db.execute(
+            "SELECT owner_id, shared_with_id, permission, created_at FROM list_shares WHERE list_id=?",
+            (source_list_id,),
+        ).fetchall():
+            db.execute(
+                "INSERT INTO list_shares (list_id, owner_id, shared_with_id, permission, created_at) VALUES (?,?,?,?,?)",
+                (target_list_id, share["owner_id"], share["shared_with_id"], share["permission"], share["created_at"]),
+            )
+
+    db.commit()
+    return True
+
+
+def _ensure_day_state(db, user_id, target_date):
+    existing = db.execute(
+        "SELECT 1 FROM lists WHERE user_id=? AND work_date=? LIMIT 1",
+        (user_id, target_date),
+    ).fetchone()
+    if existing:
+        return
+
+    prior = db.execute(
+        "SELECT MAX(work_date) AS source_date FROM lists WHERE user_id=? AND work_date < ?",
+        (user_id, target_date),
+    ).fetchone()
+    source_date = prior["source_date"] if prior else None
+    if source_date:
+        _clone_day_snapshot(db, user_id, source_date, target_date)
+
+
+def _report_bounds(anchor_date, period):
+    if period == "weekly":
+        start = anchor_date - timedelta(days=anchor_date.weekday())
+        end = start + timedelta(days=6)
+    elif period == "monthly":
+        start = anchor_date.replace(day=1)
+        next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        end = next_month - timedelta(days=1)
+    else:
+        raise ValueError("Unsupported report period")
+    return start, end
+
+
+def _build_report(db, user_id, start_date, end_date, anchor_date, period, mode="snapshot"):
+    mode = (mode or "snapshot").lower()
+    if mode not in ("snapshot", "unique"):
+        mode = "snapshot"
+
+    rows = db.execute("""
+        SELECT l.work_date,
+               l.id AS list_id,
+               l.series_id AS list_series_id,
+               li.id AS item_id,
+               li.series_id AS item_series_id,
+               li.title,
+               li.priority,
+               li.completed
+        FROM lists l
+        LEFT JOIN list_items li ON li.list_id = l.id
+        WHERE l.user_id = ? AND l.work_date BETWEEN ? AND ?
+        ORDER BY l.work_date, l.id, li.sort_order, li.id
+    """, (user_id, start_date.isoformat(), end_date.isoformat())).fetchall()
+
+    framework_rows = db.execute("""
+        SELECT lf.framework_key, COUNT(*) AS cnt
+        FROM list_frameworks lf
+        JOIN lists l ON l.id = lf.list_id
+        WHERE l.user_id = ? AND l.work_date BETWEEN ? AND ?
+        GROUP BY lf.framework_key
+        ORDER BY cnt DESC, lf.framework_key
+    """, (user_id, start_date.isoformat(), end_date.isoformat())).fetchall()
+
+    daily_snapshot = defaultdict(lambda: {
+        "work_date": None,
+        "lists": set(),
+        "item_rows": 0,
+        "completed_rows": 0,
+        "high_priority_open_rows": 0,
+        "item_series": set(),
+        "completed_series": set(),
+        "high_priority_series": set(),
+    })
+
+    snapshot_lists = set()
+    snapshot_item_rows = 0
+    snapshot_completed_rows = 0
+    snapshot_high_priority_open_rows = 0
+    unique_lists = set()
+    unique_item_series = set()
+    unique_completed_series = set()
+    unique_high_priority_open_series = set()
+    
+    # Track per-item-series details for task_repeats
+    item_series_details = defaultdict(lambda: {
+        "title": None,
+        "dates": [],  # list of (work_date, completed) tuples
+        "first_date": None,
+        "last_date": None,
+        "total_occurrences": 0,
+        "completed_occurrences": 0,
+    })
+
+    for row in rows:
+        work_date = row["work_date"]
+        day = daily_snapshot[work_date]
+        day["work_date"] = work_date
+        day["lists"].add(row["list_id"])
+        snapshot_lists.add(row["list_id"])
+        unique_lists.add(row["list_series_id"])
+
+        if row["item_id"] is None:
+            continue
+
+        snapshot_item_rows += 1
+        day["item_rows"] += 1
+        item_series_id = row["item_series_id"]
+        unique_item_series.add(item_series_id)
+        day["item_series"].add(item_series_id)
+        
+        # Track item series details for task_repeats
+        details = item_series_details[item_series_id]
+        if details["title"] is None:
+            details["title"] = row["title"]
+        if details["first_date"] is None:
+            details["first_date"] = work_date
+        details["last_date"] = work_date
+        details["total_occurrences"] += 1
+        details["dates"].append((work_date, bool(row["completed"])))
+
+        if row["completed"]:
+            snapshot_completed_rows += 1
+            day["completed_rows"] += 1
+            unique_completed_series.add(item_series_id)
+            day["completed_series"].add(item_series_id)
+            details["completed_occurrences"] += 1
+
+        if row["priority"] == "high" and not row["completed"]:
+            snapshot_high_priority_open_rows += 1
+            unique_high_priority_open_series.add(item_series_id)
+            day["high_priority_open_rows"] += 1
+            day["high_priority_series"].add(item_series_id)
+
+    daily_breakdown = []
+    for work_date in sorted(daily_snapshot.keys()):
+        day = daily_snapshot[work_date]
+        daily_breakdown.append({
+            "work_date": work_date,
+            "snapshot": {
+                "lists": len(day["lists"]),
+                "items": day["item_rows"],
+                "completed_items": day["completed_rows"],
+                "high_priority_open": day["high_priority_open_rows"],
+            },
+            "unique": {
+                "lists": len(day["lists"]),
+                "items": len(day["item_series"]),
+                "completed_items": len(day["completed_series"]),
+                "high_priority_open": len(day["high_priority_series"]),
+            },
+        })
+
+    snapshot_completion_rate = round((snapshot_completed_rows / snapshot_item_rows * 100) if snapshot_item_rows else 0, 1)
+    unique_completion_rate = round((len(unique_completed_series) / len(unique_item_series) * 100) if unique_item_series else 0, 1)
+    framework_usage = {row["framework_key"]: row["cnt"] for row in framework_rows}
+    
+    # Build task_repeats array with per-item series details
+    task_repeats = []
+    for item_series_id, details in item_series_details.items():
+        completion_rate = round((details["completed_occurrences"] / details["total_occurrences"] * 100) if details["total_occurrences"] else 0, 1)
+        task_repeats.append({
+            "item_series_id": item_series_id,
+            "title": details["title"],
+            "total_occurrences": details["total_occurrences"],
+            "completed_occurrences": details["completed_occurrences"],
+            "completion_rate": completion_rate,
+            "first_date": details["first_date"],
+            "last_date": details["last_date"],
+            "completion_entries": [{"date": date_str, "completed": completed} for date_str, completed in details["dates"]],
+        })
+    task_repeats.sort(key=lambda x: (-x["total_occurrences"], x["title"] or ""))
+
+    return {
+        "mode": mode,
+        "period": period,
+        "anchor_date": anchor_date.isoformat(),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "snapshot": {
+            "total_lists": len(snapshot_lists),
+            "total_items": snapshot_item_rows,
+            "completed_items": snapshot_completed_rows,
+            "high_priority_open": snapshot_high_priority_open_rows,
+            "completion_rate": snapshot_completion_rate,
+        },
+        "unique": {
+            "total_lists": len(unique_lists),
+            "total_items": len(unique_item_series),
+            "completed_items": len(unique_completed_series),
+            "high_priority_open": len(unique_high_priority_open_series),
+            "completion_rate": unique_completion_rate,
+        },
+        "repeat_occurrences": max(0, snapshot_item_rows - len(unique_item_series)),
+        "framework_usage": framework_usage,
+        "daily_breakdown": daily_breakdown,
+        "task_repeats": task_repeats,
+    }
 
 # ── Page ──────────────────────────────────────────────────────────────────
 
@@ -691,9 +1005,13 @@ def frameworks_catalog():
 @login_required
 def get_lists():
     db = get_db()
+    work_date = _active_work_date()
+    _ensure_day_state(db, uid(), work_date)
     # Own lists
-    rows = db.execute("SELECT * FROM lists WHERE user_id=? ORDER BY created_at DESC",
-                       (uid(),)).fetchall()
+    rows = db.execute(
+        "SELECT * FROM lists WHERE user_id=? AND work_date=? ORDER BY created_at DESC, id DESC",
+        (uid(), work_date),
+    ).fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -720,8 +1038,10 @@ def create_list():
     if not name:
         return jsonify({"error": "List name is required"}), 400
     db = get_db()
-    cur = db.execute("INSERT INTO lists (user_id, name, description) VALUES (?,?,?)",
-                      (uid(), name, desc))
+    cur = db.execute(
+        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, desc),
+    )
     db.commit()
     return jsonify({"ok": True, "id": cur.lastrowid}), 201
 
@@ -784,8 +1104,8 @@ def create_item(lid):
     nxt = db.execute("SELECT COALESCE(MAX(sort_order),-1)+1 as n FROM list_items WHERE list_id=?",
                       (lid,)).fetchone()["n"]
     cur = db.execute(
-        "INSERT INTO list_items (list_id,title,description,sort_order,due_date,priority) VALUES (?,?,?,?,?,?)",
-        (lid, title, desc, nxt, due_date, priority))
+        "INSERT INTO list_items (list_id,series_id,title,description,sort_order,due_date,priority) VALUES (?,?,?,?,?,?,?)",
+        (lid, secrets.token_hex(8), title, desc, nxt, due_date, priority))
     db.commit()
     return jsonify({"ok": True, "id": cur.lastrowid}), 201
 
@@ -1088,39 +1408,41 @@ def delete_comment(cid):
 @login_required
 def dashboard():
     db = get_db()
-    total_lists = db.execute("SELECT COUNT(*) as c FROM lists WHERE user_id=?", (uid(),)).fetchone()["c"]
+    work_date = _active_work_date()
+    _ensure_day_state(db, uid(), work_date)
+    total_lists = db.execute("SELECT COUNT(*) as c FROM lists WHERE user_id=? AND work_date=?", (uid(), work_date)).fetchone()["c"]
     total_items = db.execute("""
         SELECT COUNT(*) as c FROM list_items li
-        JOIN lists l ON l.id = li.list_id WHERE l.user_id=?
-    """, (uid(),)).fetchone()["c"]
+        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND l.work_date=?
+    """, (uid(), work_date)).fetchone()["c"]
     completed_items = db.execute("""
         SELECT COUNT(*) as c FROM list_items li
-        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND li.completed=1
-    """, (uid(),)).fetchone()["c"]
+        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND l.work_date=? AND li.completed=1
+    """, (uid(), work_date)).fetchone()["c"]
     overdue = db.execute("""
         SELECT COUNT(*) as c FROM list_items li
         JOIN lists l ON l.id = li.list_id
-        WHERE l.user_id=? AND li.due_date IS NOT NULL AND li.due_date < date('now') AND li.completed=0
-    """, (uid(),)).fetchone()["c"]
+        WHERE l.user_id=? AND l.work_date=? AND li.due_date IS NOT NULL AND li.due_date < ? AND li.completed=0
+    """, (uid(), work_date, work_date)).fetchone()["c"]
     high_pri = db.execute("""
         SELECT COUNT(*) as c FROM list_items li
-        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND li.priority='high' AND li.completed=0
-    """, (uid(),)).fetchone()["c"]
+        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND l.work_date=? AND li.priority='high' AND li.completed=0
+    """, (uid(), work_date)).fetchone()["c"]
 
     # Framework usage breakdown
     fw_usage = db.execute("""
         SELECT lf.framework_key, COUNT(*) as cnt FROM list_frameworks lf
-        JOIN lists l ON l.id = lf.list_id WHERE l.user_id=?
+        JOIN lists l ON l.id = lf.list_id WHERE l.user_id=? AND l.work_date=?
         GROUP BY lf.framework_key
-    """, (uid(),)).fetchall()
+    """, (uid(), work_date)).fetchall()
     fw_data = {r["framework_key"]: r["cnt"] for r in fw_usage}
 
     # Recent items
     recent = db.execute("""
         SELECT li.*, l.name as list_name FROM list_items li
-        JOIN lists l ON l.id = li.list_id WHERE l.user_id=?
+        JOIN lists l ON l.id = li.list_id WHERE l.user_id=? AND l.work_date=?
         ORDER BY li.created_at DESC LIMIT 10
-    """, (uid(),)).fetchall()
+    """, (uid(), work_date)).fetchall()
 
     return jsonify({
         "total_lists": total_lists,
@@ -1132,6 +1454,23 @@ def dashboard():
         "recent_items": [dict(r) for r in recent],
         "completion_rate": round((completed_items / total_items * 100) if total_items else 0, 1)
     })
+
+
+@app.route("/api/reports/<period>", methods=["GET"])
+@login_required
+def report(period):
+    db = get_db()
+    anchor = _safe_date(request.args.get("date")) or _active_work_date()
+    anchor_date = date.fromisoformat(anchor)
+    normalized = period.lower()
+    if normalized in ("week", "weekly"):
+        normalized = "weekly"
+    elif normalized in ("month", "monthly"):
+        normalized = "monthly"
+    else:
+        return jsonify({"error": "Unsupported report period"}), 400
+    start_date, end_date = _report_bounds(anchor_date, normalized)
+    return jsonify(_build_report(db, uid(), start_date, end_date, anchor_date, normalized))
 
 # ── Export / Import ───────────────────────────────────────────────────────
 
@@ -1176,8 +1515,10 @@ def import_list():
         return jsonify({"error": "Too many items"}), 400
     frameworks = d.get("frameworks", [])
     db = get_db()
-    cur = db.execute("INSERT INTO lists (user_id, name, description) VALUES (?,?,?)",
-                      (uid(), name, desc))
+    cur = db.execute(
+        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, desc),
+    )
     lid = cur.lastrowid
     for idx, item in enumerate(items):
         title = _san(item.get("title", ""))
@@ -1187,8 +1528,8 @@ def import_list():
         if priority not in ("low", "medium", "high"):
             priority = "medium"
         db.execute(
-            "INSERT INTO list_items (list_id,title,description,sort_order,due_date,priority,completed) VALUES (?,?,?,?,?,?,?)",
-            (lid, title, _san_text(item.get("description", "")), idx,
+            "INSERT INTO list_items (list_id,series_id,title,description,sort_order,due_date,priority,completed) VALUES (?,?,?,?,?,?,?,?)",
+            (lid, secrets.token_hex(8), title, _san_text(item.get("description", "")), idx,
              _valid_date(item.get("due_date")), priority,
              1 if item.get("completed") else 0))
     for fk in frameworks:
@@ -1246,12 +1587,13 @@ def remove_share(lid, sid):
 @login_required
 def get_shared_lists():
     db = get_db()
+    work_date = _active_work_date()
     rows = db.execute("""
         SELECT l.*, ls.permission, u.username as owner_name FROM list_shares ls
         JOIN lists l ON l.id = ls.list_id
         JOIN users u ON u.id = ls.owner_id
-        WHERE ls.shared_with_id=?
-    """, (uid(),)).fetchall()
+        WHERE ls.shared_with_id=? AND l.work_date=?
+    """, (uid(), work_date)).fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -1302,16 +1644,87 @@ def create_from_template(tid):
         return jsonify({"error": "Template not found"}), 404
     d = request.get_json(silent=True) or {}
     name = _san(d.get("name") or tmpl["name"])
-    cur = db.execute("INSERT INTO lists (user_id, name, description) VALUES (?,?,?)",
-                      (uid(), name, tmpl["description"]))
+    cur = db.execute(
+        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, tmpl["description"]),
+    )
     lid = cur.lastrowid
     items = json.loads(tmpl["items_json"])
     for idx, item in enumerate(items):
         db.execute(
-            "INSERT INTO list_items (list_id,title,description,sort_order,priority) VALUES (?,?,?,?,?)",
-            (lid, item["title"], item.get("description", ""), idx, item.get("priority", "medium")))
+            "INSERT INTO list_items (list_id,series_id,title,description,sort_order,priority) VALUES (?,?,?,?,?,?)",
+            (lid, secrets.token_hex(8), item["title"], item.get("description", ""), idx, item.get("priority", "medium")))
     db.commit()
     return jsonify({"ok": True, "id": lid}), 201
+
+
+@app.route("/api/reports/<period>/download", methods=["GET"])
+@login_required
+def download_report(period):
+    db = get_db()
+    anchor = _safe_date(request.args.get("date")) or _active_work_date()
+    anchor_date = date.fromisoformat(anchor)
+    normalized = period.lower()
+    if normalized in ("week", "weekly"):
+        normalized = "weekly"
+    elif normalized in ("month", "monthly"):
+        normalized = "monthly"
+    else:
+        return jsonify({"error": "Unsupported report period"}), 400
+
+    mode = request.args.get("mode", "snapshot")
+    fmt = request.args.get("format", "json").lower()
+    if fmt not in ("json", "csv"):
+        fmt = "json"
+
+    start_date, end_date = _report_bounds(anchor_date, normalized)
+    report_data = _build_report(db, uid(), start_date, end_date, anchor_date, normalized, mode)
+    safe_name = f"{normalized}-{anchor_date.isoformat()}-{mode}-report"
+
+    if fmt == "csv":
+        si = io.StringIO()
+        writer = csv.writer(si)
+        writer.writerow(["section", "work_date", "snapshot_items", "snapshot_completed", "snapshot_high_priority_open", "unique_items", "unique_completed", "unique_high_priority_open"])
+        summary_key = report_data["mode"]
+        summary = report_data[summary_key]
+        writer.writerow([
+            "summary",
+            f"{report_data['start_date']}..{report_data['end_date']}",
+            summary["total_items"],
+            summary["completed_items"],
+            summary["high_priority_open"],
+            report_data["unique"]["total_items"],
+            report_data["unique"]["completed_items"],
+            report_data["unique"]["high_priority_open"],
+        ])
+        for day in report_data["daily_breakdown"]:
+            writer.writerow([
+                "daily",
+                day["work_date"],
+                day["snapshot"]["items"],
+                day["snapshot"]["completed_items"],
+                day["snapshot"]["high_priority_open"],
+                day["unique"]["items"],
+                day["unique"]["completed_items"],
+                day["unique"]["high_priority_open"],
+            ])
+        # Add task repeats section
+        if report_data.get("task_repeats"):
+            writer.writerow([])  # Blank line
+            writer.writerow(["task_repeat", "title", "total_occurrences", "completed_occurrences", "completion_rate", "first_date", "last_date"])
+            for task in report_data["task_repeats"]:
+                writer.writerow([
+                    "task_repeat",
+                    task.get("title", ""),
+                    task.get("total_occurrences", 0),
+                    task.get("completed_occurrences", 0),
+                    task.get("completion_rate", 0),
+                    task.get("first_date", ""),
+                    task.get("last_date", ""),
+                ])
+        return Response(si.getvalue(), mimetype="text/csv", headers={"Content-Disposition": f"attachment;filename={safe_name}.csv"})
+
+    return Response(json.dumps(report_data, indent=2), mimetype="application/json", headers={"Content-Disposition": f"attachment;filename={safe_name}.json"})
 
 @app.route("/api/templates/<int:tid>", methods=["DELETE"])
 @login_required

@@ -4,10 +4,17 @@
 
 // ── API ────────────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
-    const res = await fetch(path, {
+    const url = new URL(path, window.location.origin);
+    const includeWorkDate = opts.includeWorkDate !== false;
+    if (includeWorkDate && path.startsWith('/api/')) {
+        url.searchParams.set('date', currentWorkDate);
+    }
+    const requestOpts = { ...opts };
+    delete requestOpts.includeWorkDate;
+    const res = await fetch(url, {
         headers: { 'Content-Type': 'application/json' },
-        ...opts,
-        body: opts.body ? JSON.stringify(opts.body) : undefined
+        ...requestOpts,
+        body: requestOpts.body ? JSON.stringify(requestOpts.body) : undefined
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Request failed');
@@ -27,6 +34,75 @@ function esc(s) {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
+}
+
+function getStoredWorkDate() {
+    const saved = localStorage.getItem('workDate');
+    return /^\d{4}-\d{2}-\d{2}$/.test(saved || '') ? saved : new Date().toISOString().slice(0, 10);
+}
+
+function formatWorkDate(value) {
+    return new Intl.DateTimeFormat(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+    }).format(new Date(value + 'T00:00:00'));
+}
+
+function syncWorkDateUI() {
+    const picker = document.getElementById('workDatePicker');
+    if (picker && picker.value !== currentWorkDate) picker.value = currentWorkDate;
+    const label = document.getElementById('activeDateLabel');
+    if (label) label.textContent = formatWorkDate(currentWorkDate);
+    const hint = document.getElementById('activeDateHint');
+    if (hint) hint.textContent = 'All lists, frameworks, and reports below follow this day.';
+}
+
+function syncReportUI() {
+    document.querySelectorAll('.report-period-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.reportPeriod === currentReportPeriod);
+    });
+    document.querySelectorAll('.report-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.reportMode === currentReportMode);
+    });
+    const label = document.getElementById('reportNavigatorLabel');
+    if (label) {
+        const periodLabel = currentReportPeriod === 'monthly' ? 'monthly' : 'weekly';
+        const modeLabel = currentReportMode === 'unique' ? 'unique tasks' : 'snapshot totals';
+        label.textContent = `Browsing ${periodLabel} reports from ${formatWorkDate(currentReportAnchorDate)} in ${modeLabel} mode.`;
+    }
+}
+
+function shiftWorkDate(days) {
+    const next = new Date(currentWorkDate + 'T00:00:00');
+    next.setDate(next.getDate() + days);
+    return next.toISOString().slice(0, 10);
+}
+
+async function selectWorkDate(nextDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate === currentWorkDate) return;
+    const preserveSeriesId = currentListSeriesId;
+    const detailOpen = Boolean(currentListId);
+    currentWorkDate = nextDate;
+    currentReportAnchorDate = nextDate;
+    localStorage.setItem('workDate', nextDate);
+    syncWorkDateUI();
+    syncReportUI();
+    if (detailOpen) {
+        await switchView('dashboard');
+        if (preserveSeriesId) {
+            const matchingList = allLists.find(l => l.series_id === preserveSeriesId);
+            if (matchingList) {
+                openList(matchingList.id);
+                return;
+            }
+        }
+        currentListId = null;
+        currentListSeriesId = null;
+    } else {
+        await switchView(currentView);
+    }
 }
 
 // ── Custom Confirm (replaces native confirm) ───────────────────────────
@@ -72,6 +148,7 @@ document.getElementById('undoBtn').addEventListener('click', async () => {
 
 // ── State ──────────────────────────────────────────────────────────────
 let currentListId = null;
+let currentListSeriesId = null;
 let currentItems = [];
 let currentFrameworks = [];
 let frameworksCatalog = {};
@@ -83,6 +160,10 @@ let allLists = [];
 let allTags = [];
 let selectedItemIds = new Set();
 let currentView = 'dashboard';
+let currentWorkDate = getStoredWorkDate();
+let currentReportPeriod = localStorage.getItem('reportPeriod') === 'monthly' ? 'monthly' : 'weekly';
+let currentReportMode = localStorage.getItem('reportMode') === 'unique' ? 'unique' : 'snapshot';
+let currentReportAnchorDate = currentWorkDate;
 
 // ── Theme ──────────────────────────────────────────────────────────────
 function initTheme() {
@@ -144,13 +225,15 @@ function showApp(username) {
     // Avatar initials
     const initials = username.slice(0, 2).toUpperCase();
     document.getElementById('navAvatar').textContent = initials;
+    syncWorkDateUI();
+    syncReportUI();
     loadCatalog();
     loadTags();
     switchView('dashboard');
 }
 
 // ── Sidebar Navigation ────────────────────────────────────────────────
-function switchView(view) {
+async function switchView(view) {
     currentView = view;
     // Hide all views
     ['dashboardView', 'listsView', 'sharedView', 'templatesView', 'detailView'].forEach(id => {
@@ -166,22 +249,22 @@ function switchView(view) {
         case 'dashboard':
             document.getElementById('dashboardView').classList.remove('hidden');
             document.getElementById('dashboardView').classList.add('view-transition');
-            loadDashboard();
+            await loadDashboard();
             break;
         case 'lists':
             document.getElementById('listsView').classList.remove('hidden');
             document.getElementById('listsView').classList.add('view-transition');
-            loadLists();
+            await loadLists();
             break;
         case 'shared':
             document.getElementById('sharedView').classList.remove('hidden');
             document.getElementById('sharedView').classList.add('view-transition');
-            loadSharedLists();
+            await loadSharedLists();
             break;
         case 'templates':
             document.getElementById('templatesView').classList.remove('hidden');
             document.getElementById('templatesView').classList.add('view-transition');
-            loadTemplates();
+            await loadTemplates();
             break;
     }
 }
@@ -215,6 +298,122 @@ function showLoading() {
 }
 function hideLoading() {
     document.getElementById('loadingSkeleton').classList.add('hidden');
+}
+
+function bindDateControls() {
+    const picker = document.getElementById('workDatePicker');
+    if (picker && !picker.dataset.bound) {
+        picker.dataset.bound = '1';
+        picker.value = currentWorkDate;
+        picker.addEventListener('change', (e) => {
+            selectWorkDate(e.target.value);
+        });
+    }
+
+    const prevBtn = document.getElementById('prevDateBtn');
+    if (prevBtn && !prevBtn.dataset.bound) {
+        prevBtn.dataset.bound = '1';
+        prevBtn.addEventListener('click', () => selectWorkDate(shiftWorkDate(-1)));
+    }
+
+    const nextBtn = document.getElementById('nextDateBtn');
+    if (nextBtn && !nextBtn.dataset.bound) {
+        nextBtn.dataset.bound = '1';
+        nextBtn.addEventListener('click', () => selectWorkDate(shiftWorkDate(1)));
+    }
+
+    const todayBtn = document.getElementById('todayBtn');
+    if (todayBtn && !todayBtn.dataset.bound) {
+        todayBtn.dataset.bound = '1';
+        todayBtn.addEventListener('click', () => selectWorkDate(new Date().toISOString().slice(0, 10)));
+    }
+}
+
+function bindReportControls() {
+    document.querySelectorAll('.report-period-btn').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => setReportPeriod(btn.dataset.reportPeriod));
+    });
+
+    document.querySelectorAll('.report-mode-btn').forEach(btn => {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => setReportMode(btn.dataset.reportMode));
+    });
+
+    const prevBtn = document.getElementById('reportPrevBtn');
+    if (prevBtn && !prevBtn.dataset.bound) {
+        prevBtn.dataset.bound = '1';
+        prevBtn.addEventListener('click', () => shiftReportPeriod(-1));
+    }
+
+    const nextBtn = document.getElementById('reportNextBtn');
+    if (nextBtn && !nextBtn.dataset.bound) {
+        nextBtn.dataset.bound = '1';
+        nextBtn.addEventListener('click', () => shiftReportPeriod(1));
+    }
+
+    const csvBtn = document.getElementById('reportDownloadCsvBtn');
+    if (csvBtn && !csvBtn.dataset.bound) {
+        csvBtn.dataset.bound = '1';
+        csvBtn.addEventListener('click', () => downloadReport(currentReportPeriod, 'csv'));
+    }
+
+    const jsonBtn = document.getElementById('reportDownloadJsonBtn');
+    if (jsonBtn && !jsonBtn.dataset.bound) {
+        jsonBtn.dataset.bound = '1';
+        jsonBtn.addEventListener('click', () => downloadReport(currentReportPeriod, 'json'));
+    }
+}
+
+function shiftReportAnchor(step) {
+    const next = new Date(currentReportAnchorDate + 'T00:00:00');
+    if (currentReportPeriod === 'monthly') {
+        next.setMonth(next.getMonth() + step);
+    } else {
+        next.setDate(next.getDate() + step * 7);
+    }
+    return next.toISOString().slice(0, 10);
+}
+
+async function setReportPeriod(period) {
+    if (period !== 'weekly' && period !== 'monthly') return;
+    currentReportPeriod = period;
+    localStorage.setItem('reportPeriod', period);
+    syncReportUI();
+    await loadReports();
+}
+
+async function setReportMode(mode) {
+    if (mode !== 'snapshot' && mode !== 'unique') return;
+    currentReportMode = mode;
+    localStorage.setItem('reportMode', mode);
+    syncReportUI();
+    await loadReports();
+}
+
+async function shiftReportPeriod(step) {
+    currentReportAnchorDate = shiftReportAnchor(step);
+    syncReportUI();
+    await loadReports();
+}
+
+function reportEndpoint(period, format = null) {
+    const params = new URLSearchParams({ date: currentReportAnchorDate, mode: currentReportMode });
+    if (format) params.set('format', format);
+    const suffix = format ? '/download' : '';
+    return `/api/reports/${period}${suffix}?${params.toString()}`;
+}
+
+function downloadReport(period, format) {
+    const link = document.createElement('a');
+    link.href = reportEndpoint(period, format);
+    link.target = '_blank';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
 }
 
 // ── Catalog ────────────────────────────────────────────────────────────
@@ -252,6 +451,7 @@ function updateTagFilter() {
 // ── Dashboard ──────────────────────────────────────────────────────────
 async function loadDashboard() {
     try {
+        syncWorkDateUI();
         const data = await api('/api/dashboard');
         document.getElementById('statLists').textContent = data.total_lists;
         document.getElementById('statItems').textContent = data.total_items;
@@ -297,8 +497,97 @@ async function loadDashboard() {
             });
         }
         // Also update sidebar list links
-        loadSidebarLists();
+        await loadSidebarLists();
+        await loadReports();
     } catch (e) { console.error(e); }
+}
+
+function reportCardText(report) {
+    const primary = currentReportMode === 'unique' ? report.unique : report.snapshot;
+    const secondary = currentReportMode === 'unique' ? report.snapshot : report.unique;
+    const primaryLabel = currentReportMode === 'unique' ? 'unique tasks' : 'items';
+    const secondaryLabel = currentReportMode === 'unique' ? 'snapshot rows' : 'unique tasks';
+    return {
+        value: `${primary.total_items} ${primaryLabel} · ${primary.completed_items} completed`,
+        range: `${report.start_date} to ${report.end_date} · ${report.repeat_occurrences} repeated snapshots · ${secondary.total_items} ${secondaryLabel}`
+    };
+}
+
+function renderReportCard(prefix, period, report) {
+    const label = document.getElementById(`${prefix}ReportLabel`);
+    const value = document.getElementById(`${prefix}ReportValue`);
+    const range = document.getElementById(`${prefix}ReportRange`);
+    if (!label || !value || !range) return;
+    const periodLabel = period === 'weekly' ? 'Weekly' : 'Monthly';
+    label.textContent = `${periodLabel} ${currentReportMode === 'unique' ? 'unique-task' : 'snapshot'} report`;
+    const text = reportCardText(report);
+    value.textContent = text.value;
+    range.textContent = text.range;
+}
+
+function renderTaskRepeatsTable(report) {
+    const tbody = document.getElementById('taskRepeatsTableBody');
+    const noMsgEl = document.getElementById('noTaskRepeatsMsg');
+    const tableEl = document.getElementById('taskRepeatsTable');
+    
+    if (!tbody || !noMsgEl || !tableEl) return;
+    
+    tbody.innerHTML = '';
+    
+    const taskRepeats = report.task_repeats || [];
+    
+    if (taskRepeats.length === 0) {
+        tableEl.style.display = 'none';
+        noMsgEl.style.display = 'block';
+        return;
+    }
+    
+    tableEl.style.display = 'table';
+    noMsgEl.style.display = 'none';
+    
+    taskRepeats.forEach(task => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="task-title" title="${task.title || 'Untitled'}">${task.title || 'Untitled'}</td>
+            <td class="text-center">${task.total_occurrences}</td>
+            <td class="text-center">${task.completed_occurrences}</td>
+            <td class="text-center completion-rate">${task.completion_rate}%</td>
+            <td class="task-date">${task.first_date}</td>
+            <td class="task-date">${task.last_date}</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+async function loadReports() {
+    const primaryPeriod = currentReportPeriod;
+    const comparisonPeriod = primaryPeriod === 'weekly' ? 'monthly' : 'weekly';
+    const primaryLabel = document.getElementById('primaryReportLabel');
+    const primaryValue = document.getElementById('primaryReportValue');
+    const primaryRange = document.getElementById('primaryReportRange');
+    const secondaryLabel = document.getElementById('secondaryReportLabel');
+    const secondaryValue = document.getElementById('secondaryReportValue');
+    const secondaryRange = document.getElementById('secondaryReportRange');
+    if (!primaryLabel || !primaryValue || !primaryRange || !secondaryLabel || !secondaryValue || !secondaryRange) return;
+
+    try {
+        const [primaryReport, comparisonReport] = await Promise.all([
+            api(reportEndpoint(primaryPeriod), { includeWorkDate: false }),
+            api(reportEndpoint(comparisonPeriod), { includeWorkDate: false }),
+        ]);
+
+        renderReportCard('primary', primaryPeriod, primaryReport);
+        renderReportCard('secondary', comparisonPeriod, comparisonReport);
+        primaryLabel.textContent = `${primaryPeriod === 'weekly' ? 'Weekly' : 'Monthly'} report`;
+        secondaryLabel.textContent = `${comparisonPeriod === 'weekly' ? 'Weekly' : 'Monthly'} comparison`;
+        renderTaskRepeatsTable(primaryReport);
+        syncReportUI();
+    } catch (e) {
+        primaryValue.textContent = 'Unavailable';
+        primaryRange.textContent = '';
+        secondaryValue.textContent = 'Unavailable';
+        secondaryRange.textContent = '';
+    }
 }
 
 async function loadSidebarLists() {
@@ -469,6 +758,7 @@ function goBack() {
     document.getElementById('detailView').classList.add('hidden');
     document.getElementById('breadcrumb').classList.add('hidden');
     currentListId = null;
+    currentListSeriesId = null;
     currentItems = [];
     currentFrameworks = [];
     activeFrameworkTab = null;
@@ -487,6 +777,7 @@ async function loadListDetail() {
         const list = lists.find(l => l.id === currentListId);
         document.getElementById('detailTitle').textContent = list?.name || 'List';
         document.getElementById('detailDesc').textContent = list?.description || '';
+        currentListSeriesId = list?.series_id || null;
         const bcName = document.getElementById('bcListName');
         if (bcName) bcName.textContent = list?.name || '';
         currentItems = items;
@@ -1041,7 +1332,7 @@ function bindExportImport() {
     const expBtn = document.getElementById('exportListBtn');
     if (expBtn) expBtn.addEventListener('click', () => {
         if (!currentListId) return;
-        window.open(`/api/lists/${currentListId}/export?format=json`, '_blank');
+        window.open(`/api/lists/${currentListId}/export?format=json&date=${encodeURIComponent(currentWorkDate)}`, '_blank');
     });
 
     const impBtn = document.getElementById('importListBtn');
@@ -1825,6 +2116,8 @@ document.addEventListener('keydown', (e) => {
 
 // ── Bind all event listeners ───────────────────────────────────────────
 function bindAllEvents() {
+    bindDateControls();
+    bindReportControls();
     bindFilterEvents();
     bindBulkActions();
     bindCommentEvents();
@@ -1844,4 +2137,6 @@ if ('serviceWorker' in navigator) {
 
 // ── Init ───────────────────────────────────────────────────────────────
 initTheme();
+syncWorkDateUI();
+syncReportUI();
 checkAuth();
