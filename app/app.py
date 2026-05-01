@@ -571,21 +571,44 @@ def _init_db_sqlite():
     db.execute("PRAGMA foreign_keys=ON")
     db.executescript(_SQLITE_SCHEMA)
     # Migrate: add columns if they don't exist (for existing DBs)
+    # Use simplified ALTERs (avoid default expressions) to improve compatibility
     for col_sql in [
         "ALTER TABLE lists ADD COLUMN series_id TEXT",
-        "ALTER TABLE lists ADD COLUMN work_date TEXT DEFAULT (date('now'))",
+        "ALTER TABLE lists ADD COLUMN work_date TEXT",
         "ALTER TABLE list_items ADD COLUMN series_id TEXT",
-        "ALTER TABLE list_items ADD COLUMN due_date TEXT DEFAULT NULL",
-        "ALTER TABLE list_items ADD COLUMN priority TEXT DEFAULT 'medium'",
-        "ALTER TABLE list_items ADD COLUMN completed INTEGER DEFAULT 0",
+        "ALTER TABLE list_items ADD COLUMN due_date TEXT",
+        "ALTER TABLE list_items ADD COLUMN priority TEXT",
+        "ALTER TABLE list_items ADD COLUMN completed INTEGER",
     ]:
         try:
             db.execute(col_sql)
         except sqlite3.OperationalError:
+            # ignore if column already exists or sqlite version doesn't support ALTER
             pass
-    db.execute("UPDATE lists SET series_id = COALESCE(series_id, 'series-' || id)")
-    db.execute("UPDATE lists SET work_date = COALESCE(work_date, date('now'))")
-    db.execute("UPDATE list_items SET series_id = COALESCE(series_id, 'item-' || id)")
+
+    # Populate defaults for existing rows. Guard updates in case of unexpected schema.
+    try:
+        db.execute("UPDATE lists SET series_id = COALESCE(series_id, 'series-' || id)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        db.execute("UPDATE lists SET work_date = COALESCE(work_date, date('now'))")
+    except sqlite3.OperationalError:
+        # Fallback: set work_date via Python if SQL date() isn't supported here
+        try:
+            rows = db.execute("SELECT id FROM lists").fetchall()
+            today = date.today().isoformat()
+            for r in rows:
+                try:
+                    db.execute("UPDATE lists SET work_date=? WHERE id=? AND (work_date IS NULL OR work_date='')", (today, r['id']))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    try:
+        db.execute("UPDATE list_items SET series_id = COALESCE(series_id, 'item-' || id)")
+    except sqlite3.OperationalError:
+        pass
     db.commit()
     db.close()
 
