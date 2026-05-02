@@ -548,12 +548,12 @@ function renderTaskRepeatsTable(report) {
     taskRepeats.forEach(task => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td class="task-title" title="${task.title || 'Untitled'}">${task.title || 'Untitled'}</td>
-            <td class="text-center">${task.total_occurrences}</td>
-            <td class="text-center">${task.completed_occurrences}</td>
-            <td class="text-center completion-rate">${task.completion_rate}%</td>
-            <td class="task-date">${task.first_date}</td>
-            <td class="task-date">${task.last_date}</td>
+            <td class="task-title" title="${task.title || 'Untitled'}" data-label="Task">${task.title || 'Untitled'}</td>
+            <td class="text-center" data-label="Occurrences">${task.total_occurrences}</td>
+            <td class="text-center" data-label="Completed">${task.completed_occurrences}</td>
+            <td class="text-center completion-rate" data-label="Rate">${task.completion_rate}%</td>
+            <td class="task-date" data-label="First Date">${task.first_date}</td>
+            <td class="task-date" data-label="Last Date">${task.last_date}</td>
         `;
         tbody.appendChild(row);
     });

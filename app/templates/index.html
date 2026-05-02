@@ -440,21 +440,23 @@
             </div>
             <div class="report-task-repeats">
               <h3>Task Repeats</h3>
-              <table class="task-repeats-table" id="taskRepeatsTable">
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th class="text-center">Occurrences</th>
-                    <th class="text-center">Completed</th>
-                    <th class="text-center">Rate</th>
-                    <th>First Date</th>
-                    <th>Last Date</th>
-                  </tr>
-                </thead>
-                <tbody id="taskRepeatsTableBody">
-                  <!-- Populated by JavaScript -->
-                </tbody>
-              </table>
+              <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                <table class="task-repeats-table" id="taskRepeatsTable">
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th class="text-center">Occurrences</th>
+                      <th class="text-center">Completed</th>
+                      <th class="text-center">Rate</th>
+                      <th>First Date</th>
+                      <th>Last Date</th>
+                    </tr>
+                  </thead>
+                  <tbody id="taskRepeatsTableBody">
+                    <!-- Populated by JavaScript -->
+                  </tbody>
+                </table>
+              </div>
               <div id="noTaskRepeatsMsg" class="text-center text-muted" style="padding: 20px;">No task repeats in this period</div>
             </div>
             <div class="dashboard-row">
