@@ -480,6 +480,10 @@
                   Create lists and apply productivity frameworks to organize
                   your work
                 </p>
+                <div class="list-legend" aria-hidden="true">
+                  <span class="legend-item"><span class="legend-swatch persisted"></span> Continuous</span>
+                  <span class="legend-item"><span class="legend-swatch daily"></span> Daily restart</span>
+                </div>
               </div>
               <div class="view-header-actions">
                 <button
@@ -895,6 +899,10 @@
             placeholder="What's this list for?"
           ></textarea>
         </div>
+        <label class="checkbox-field" for="modalPersistCompleted">
+          <input type="checkbox" id="modalPersistCompleted" />
+          <span>Keep completed items when the list rolls to the next day</span>
+        </label>
         <div class="modal-footer">
           <button class="btn btn-ghost modal-close" data-modal="listModal">
             Cancel

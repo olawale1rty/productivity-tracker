@@ -397,6 +397,7 @@ _SQLITE_SCHEMA = """
         work_date TEXT NOT NULL DEFAULT (date('now')),
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        persist_completed INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -491,6 +492,7 @@ _POSTGRES_SCHEMA = """
         work_date TEXT NOT NULL DEFAULT CURRENT_DATE::text,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        persist_completed INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS list_items (
@@ -579,6 +581,7 @@ def _init_db_sqlite():
         "ALTER TABLE list_items ADD COLUMN due_date TEXT",
         "ALTER TABLE list_items ADD COLUMN priority TEXT",
         "ALTER TABLE list_items ADD COLUMN completed INTEGER",
+        "ALTER TABLE lists ADD COLUMN persist_completed INTEGER",
     ]:
         try:
             db.execute(col_sql)
@@ -624,6 +627,7 @@ def _init_db_postgres():
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS due_date TEXT DEFAULT NULL",
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'medium'",
         "ALTER TABLE list_items ADD COLUMN IF NOT EXISTS completed INTEGER DEFAULT 0",
+        "ALTER TABLE lists ADD COLUMN IF NOT EXISTS persist_completed INTEGER DEFAULT 0",
     ]:
         cur.execute(col_sql)
     cur.execute("UPDATE lists SET series_id = COALESCE(series_id, 'series-' || id::text)")
@@ -674,8 +678,8 @@ def _clone_day_snapshot(db, user_id, source_date, target_date):
     for source_list in source_lists:
         source_list = dict(source_list)
         cur = db.execute(
-            "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
-            (user_id, source_list["series_id"], target_date, source_list["name"], source_list.get("description", "")),
+            "INSERT INTO lists (user_id, series_id, work_date, name, description, persist_completed) VALUES (?,?,?,?,?,?)",
+            (user_id, source_list["series_id"], target_date, source_list["name"], source_list.get("description", ""), int(source_list.get("persist_completed") or 0)),
         )
         list_map[source_list["id"]] = cur.lastrowid
 
@@ -693,8 +697,12 @@ def _clone_day_snapshot(db, user_id, source_date, target_date):
             "SELECT * FROM list_items WHERE list_id=? ORDER BY sort_order, id",
             (source_list_id,),
         ).fetchall()
+        # Determine whether this source list preserves completed state
+        prow = db.execute("SELECT persist_completed FROM lists WHERE id=?", (source_list_id,)).fetchone()
+        persist_flag = int(prow["persist_completed"]) if prow and prow.get("persist_completed") else 0
         for source_item in source_items:
             source_item = dict(source_item)
+            completed_val = source_item.get("completed") if persist_flag else 0
             cur = db.execute(
                 "INSERT INTO list_items (list_id, series_id, title, description, sort_order, due_date, priority, completed, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
                 (
@@ -705,7 +713,7 @@ def _clone_day_snapshot(db, user_id, source_date, target_date):
                     source_item.get("sort_order", 0),
                     source_item.get("due_date"),
                     source_item.get("priority", "medium"),
-                    0,
+                    completed_val,
                     source_item.get("created_at"),
                 ),
             )
@@ -1061,9 +1069,10 @@ def create_list():
     if not name:
         return jsonify({"error": "List name is required"}), 400
     db = get_db()
+    persist_flag = 1 if d.get("persist") or d.get("persist_completed") else 0
     cur = db.execute(
-        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
-        (uid(), secrets.token_hex(8), _active_work_date(), name, desc),
+        "INSERT INTO lists (user_id, series_id, work_date, name, description, persist_completed) VALUES (?,?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, desc, int(persist_flag)),
     )
     db.commit()
     return jsonify({"ok": True, "id": cur.lastrowid}), 201
@@ -1073,8 +1082,11 @@ def create_list():
 def update_list(lid):
     d = request.get_json(silent=True) or {}
     db = get_db()
-    db.execute("UPDATE lists SET name=?, description=? WHERE id=? AND user_id=?",
-               (_san(d.get("name") or ""), _san_text(d.get("description") or ""), lid, uid()))
+    name = _san(d.get("name") or "")
+    desc = _san_text(d.get("description") or "")
+    persist_flag = 1 if d.get("persist") or d.get("persist_completed") else 0
+    db.execute("UPDATE lists SET name=?, description=?, persist_completed=? WHERE id=? AND user_id=?",
+               (name, desc, int(persist_flag), lid, uid()))
     db.commit()
     return jsonify({"ok": True})
 
@@ -1538,9 +1550,10 @@ def import_list():
         return jsonify({"error": "Too many items"}), 400
     frameworks = d.get("frameworks", [])
     db = get_db()
+    persist_flag = 1 if d.get("persist") or d.get("persist_completed") else 0
     cur = db.execute(
-        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
-        (uid(), secrets.token_hex(8), _active_work_date(), name, desc),
+        "INSERT INTO lists (user_id, series_id, work_date, name, description, persist_completed) VALUES (?,?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, desc, int(persist_flag)),
     )
     lid = cur.lastrowid
     for idx, item in enumerate(items):
@@ -1667,9 +1680,10 @@ def create_from_template(tid):
         return jsonify({"error": "Template not found"}), 404
     d = request.get_json(silent=True) or {}
     name = _san(d.get("name") or tmpl["name"])
+    persist_flag = 1 if d.get("persist") or d.get("persist_completed") else 0
     cur = db.execute(
-        "INSERT INTO lists (user_id, series_id, work_date, name, description) VALUES (?,?,?,?,?)",
-        (uid(), secrets.token_hex(8), _active_work_date(), name, tmpl["description"]),
+        "INSERT INTO lists (user_id, series_id, work_date, name, description, persist_completed) VALUES (?,?,?,?,?,?)",
+        (uid(), secrets.token_hex(8), _active_work_date(), name, tmpl["description"], int(persist_flag)),
     )
     lid = cur.lastrowid
     items = json.loads(tmpl["items_json"])

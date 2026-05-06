@@ -628,6 +628,16 @@ function renderLists(lists) {
     lists.forEach((l, idx) => {
         const card = document.createElement('div');
         card.className = 'list-card';
+        // Add persisted state class for visual differentiation
+        if (l.persist_completed) {
+            card.classList.add('list-card--persisted');
+            card.setAttribute('data-persisted', '1');
+            card.title = (card.title || '') + ' • Continuous list: keeps completed items when rolled';
+        } else {
+            card.classList.add('list-card--daily');
+            card.setAttribute('data-persisted', '0');
+            card.title = (card.title || '') + ' • Daily list: completed items reset each day';
+        }
         card.style.animationDelay = (idx * 60) + 'ms';
         const badges = (l.frameworks || []).map(fk => {
             const fw = frameworksCatalog[fk];
@@ -1983,6 +1993,7 @@ function bindListModal() {
         document.getElementById('listModalTitle').textContent = 'New List';
         document.getElementById('modalName').value = '';
         document.getElementById('modalDesc').value = '';
+        document.getElementById('modalPersistCompleted').checked = false;
         openModal('listModal');
     });
 
@@ -1992,6 +2003,8 @@ function bindListModal() {
         document.getElementById('listModalTitle').textContent = 'Edit List';
         document.getElementById('modalName').value = document.getElementById('detailTitle').textContent;
         document.getElementById('modalDesc').value = document.getElementById('detailDesc').textContent;
+        const list = allLists.find(l => l.id === currentListId);
+        document.getElementById('modalPersistCompleted').checked = Boolean(list?.persist_completed);
         openModal('listModal');
     });
 
@@ -1999,17 +2012,24 @@ function bindListModal() {
     if (saveBtn) saveBtn.addEventListener('click', async () => {
         const name = document.getElementById('modalName').value.trim();
         const description = document.getElementById('modalDesc').value.trim();
+        const persistCompleted = document.getElementById('modalPersistCompleted').checked;
         if (!name) { toast('Name is required', 'warning'); return; }
         try {
             if (editingListId) {
-                await api(`/api/lists/${editingListId}`, { method: 'PUT', body: { name, description } });
+                await api(`/api/lists/${editingListId}`, { method: 'PUT', body: { name, description, persist_completed: persistCompleted } });
                 document.getElementById('detailTitle').textContent = name;
                 document.getElementById('detailDesc').textContent = description;
+                const cachedList = allLists.find(l => l.id === editingListId);
+                if (cachedList) {
+                    cachedList.name = name;
+                    cachedList.description = description;
+                    cachedList.persist_completed = persistCompleted ? 1 : 0;
+                }
                 const bcName = document.getElementById('bcListName');
                 if (bcName) bcName.textContent = name;
                 toast('List updated', 'success');
             } else {
-                await api('/api/lists', { method: 'POST', body: { name, description } });
+                await api('/api/lists', { method: 'POST', body: { name, description, persist_completed: persistCompleted } });
                 toast('List created', 'success');
                 loadLists();
                 loadSidebarLists();

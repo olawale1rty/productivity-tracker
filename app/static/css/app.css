@@ -157,6 +157,24 @@ textarea { resize: vertical; }
   color: var(--text-secondary);
   margin-bottom: 0.3rem;
 }
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  padding: 0.25rem 0 0.1rem;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.checkbox-field input {
+  width: auto;
+  margin-top: 0.2rem;
+  accent-color: var(--primary);
+}
+.checkbox-field span {
+  line-height: 1.35;
+}
 .field-error {
   color: var(--danger);
   font-size: 0.8rem;
@@ -312,6 +330,8 @@ textarea { resize: vertical; }
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
   padding: 1.25rem;
+  position: relative;
+  overflow: hidden;
   cursor: pointer;
   transition: all var(--transition);
 }
@@ -351,6 +371,31 @@ textarea { resize: vertical; }
   background: var(--surface2);
   color: var(--text-secondary);
 }
+
+/* Persisted vs Daily visual indicators */
+.list-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  border-top-left-radius: var(--radius);
+  border-bottom-left-radius: var(--radius);
+  opacity: 0.95;
+}
+.list-card--persisted::before {
+  background: linear-gradient(180deg, var(--primary), var(--primary-hover));
+}
+.list-card--daily::before {
+  background: linear-gradient(180deg, var(--warning), rgba(255,149,0,0.18));
+}
+
+.list-legend { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.35rem; flex-wrap:wrap; }
+.legend-item { display:flex; gap:0.45rem; align-items:center; color:var(--text-secondary); font-size:0.85rem; }
+.legend-swatch { width:12px; height:12px; border-radius:3px; display:inline-block; box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
+.legend-swatch.persisted { background: linear-gradient(180deg, var(--primary), var(--primary-hover)); }
+.legend-swatch.daily { background: linear-gradient(180deg, var(--warning), rgba(255,149,0,0.18)); }
 
 /* ── Empty State ────────────────────────────────────────────────────── */
 .empty-state, .empty-state-sm {
