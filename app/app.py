@@ -700,7 +700,7 @@ def _clone_day_snapshot(db, user_id, source_date, target_date):
         # Determine whether this source list preserves completed state
         prow = db.execute("SELECT persist_completed FROM lists WHERE id=?", (source_list_id,)).fetchone()
         prow_dict = dict(prow) if prow else {}
-        persist_flag = int(prow_dict.get("persist_completed", 0))
+        persist_flag = int(prow_dict.get("persist_completed") or 0)
         for source_item in source_items:
             source_item = dict(source_item)
             completed_val = source_item.get("completed") if persist_flag else 0
