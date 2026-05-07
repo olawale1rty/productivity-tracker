@@ -1496,7 +1496,7 @@ def dashboard():
 @login_required
 def report(period):
     db = get_db()
-    anchor = _safe_date(request.args.get("date")) or _active_work_date()
+    anchor = _valid_date(request.args.get("date")) or _active_work_date()
     anchor_date = date.fromisoformat(anchor)
     normalized = period.lower()
     if normalized in ("week", "weekly"):
@@ -1700,7 +1700,7 @@ def create_from_template(tid):
 @login_required
 def download_report(period):
     db = get_db()
-    anchor = _safe_date(request.args.get("date")) or _active_work_date()
+    anchor = _valid_date(request.args.get("date")) or _active_work_date()
     anchor_date = date.fromisoformat(anchor)
     normalized = period.lower()
     if normalized in ("week", "weekly"):
